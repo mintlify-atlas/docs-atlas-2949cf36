@@ -1,0 +1,130 @@
+{
+  "projectType": "saas",
+  "projectName": "Pongo",
+  "projectDescription": "Self-hosted uptime monitoring and status pages configured entirely in TypeScript",
+  "theme": "aspen",
+  "primaryColor": "#10b981",
+  "lightColor": "#22c55e",
+  "darkColor": "#059669",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "project-structure"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/monitors",
+              "concepts/alerts",
+              "concepts/dashboards",
+              "concepts/channels"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/creating-monitors",
+              "guides/configuring-alerts",
+              "guides/setting-up-dashboards",
+              "guides/webhook-notifications",
+              "guides/incidents-announcements",
+              "guides/multi-region-monitoring",
+              "guides/authentication"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/status-pages",
+              "features/data-archival",
+              "features/sla-tracking"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Configuration API",
+            "pages": [
+              "api/monitor-config",
+              "api/dashboard-config",
+              "api/alert-config",
+              "api/channel-config"
+            ]
+          },
+          {
+            "group": "Scheduler API",
+            "pages": [
+              "api/scheduler-endpoints",
+              "api/scheduler-configuration"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/types/monitor-types",
+              "api/types/alert-types",
+              "api/types/webhook-payload"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Deployment Options",
+            "pages": [
+              "deployment/overview",
+              "deployment/vercel",
+              "deployment/flyio",
+              "deployment/docker",
+              "deployment/self-hosted"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "deployment/database",
+              "deployment/environment-variables",
+              "deployment/scheduler-setup",
+              "deployment/archiver-setup"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "TypeScript-configured uptime monitoring with configurable intervals and cron schedules",
+    "Public status pages with RSS and Atom feeds",
+    "Smart alerting with flap detection, auto-resolve, and webhook notifications",
+    "Multi-region monitoring with region-aware alert thresholds",
+    "S3 archival to Parquet with day-based partitioning",
+    "Response time charts, uptime bars, and latency percentiles",
+    "SLA tracking and status distribution",
+    "Incident timelines and announcements"
+  ],
+  "publicApiSurface": [
+    "monitor() - Define uptime monitors with handlers",
+    "channels() - Configure webhook notification channels",
+    "DashboardConfig - Dashboard configuration interface",
+    "AlertConfig - Alert configuration with conditions",
+    "MonitorResult - Monitor handler return type",
+    "DeclarativeCondition - Alert condition types",
+    "WebhookPayload - Webhook notification payload",
+    "Scheduler HTTP API - /health, /monitors, /monitors/:id/trigger",
+    "Dashboard routes - /, /monitors, /alerts, /dashboards, /shared/[slug]",
+    "RSS/Atom feeds - /shared/[slug]/feed.xml, /shared/[slug]/feed.atom"
+  ]
+}
