@@ -1,0 +1,473 @@
+---
+title: Archiver Setup
+description: Configure automatic data archival to S3 or local storage
+---
+
+The archiver is a standalone service that archives old check results to S3 as Parquet files with day-based partitioning, or to local filesystem storage.
+
+## Overview
+
+The archiver:
+
+- Archives check results older than a configured retention period
+- Exports data as Parquet files for efficient storage and querying
+- Uses day-based partitioning (`year=YYYY/month=MM/day=DD/`)
+- Runs on a configurable cron schedule
+- Supports both S3 and local filesystem storage
+- Processes data in configurable batch sizes
+
+## Running the Archiver
+
+### Standalone Process
+
+Start the archiver in a separate terminal:
+
+```bash
+bun archiver
+```
+
+The archiver will:
+1. Connect to your database (using `DATABASE_URL`)
+2. Start the HTTP API server (default port 3002)
+3. Run archival jobs according to `ARCHIVAL_CRON` schedule
+
+### Docker
+
+The Docker entrypoint can auto-start the archiver:
+
+```bash
+ARCHIVAL_ENABLED=true docker run pongo
+```
+
+Or in your docker-compose.yml:
+
+```yaml docker-compose.yml
+services:
+  archiver:
+    build: .
+    command: ["bun", "archiver"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      ARCHIVAL_ENABLED: "true"
+      ARCHIVAL_RETENTION_DAYS: "90"
+      S3_BUCKET: pongo-archives
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    depends_on: [db]
+```
+
+### Fly.io
+
+The included `fly.toml` handles archiver deployment:
+
+```bash
+fly secrets set ARCHIVAL_ENABLED=true
+fly secrets set S3_BUCKET=pongo-archives
+fly secrets set S3_REGION=us-east-1
+fly secrets set S3_ACCESS_KEY_ID=...
+fly secrets set S3_SECRET_ACCESS_KEY=...
+fly deploy
+```
+
+## Environment Variables
+
+### Core Configuration
+
+<ParamField path="ARCHIVAL_ENABLED" type="boolean" default="false" required>
+  Enable automatic data archival. Must be `true` for archiver to run.
+  
+  ```bash
+  ARCHIVAL_ENABLED=true
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVAL_RETENTION_DAYS" type="number" default="30">
+  Number of days before check results are archived. Results older than this are moved to archive storage.
+  
+  ```bash
+  ARCHIVAL_RETENTION_DAYS=90  # Archive after 90 days
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVER_PORT" type="number" default="3002">
+  HTTP API server port for health checks and status.
+  
+  ```bash
+  ARCHIVER_PORT=3002
+  ```
+</ParamField>
+
+### Schedule Configuration
+
+<ParamField path="ARCHIVAL_CRON" type="string" default="0 3 * * *">
+  Cron expression for archival schedule. Default runs daily at 3 AM.
+  
+  **Examples:**
+  ```bash
+  ARCHIVAL_CRON="0 3 * * *"      # Daily at 3 AM
+  ARCHIVAL_CRON="0 */6 * * *"    # Every 6 hours
+  ARCHIVAL_CRON="0 2 * * 0"      # Weekly on Sunday at 2 AM
+  ARCHIVAL_CRON="0 4 1 * *"      # Monthly on 1st at 4 AM
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVAL_BATCH_SIZE" type="number" default="10000">
+  Number of rows to process per batch. Larger batches are more efficient but use more memory.
+  
+  ```bash
+  ARCHIVAL_BATCH_SIZE=50000  # Process 50k rows per batch
+  ```
+</ParamField>
+
+## S3 Configuration
+
+Configure S3 for cloud-based archival storage.
+
+<ParamField path="S3_BUCKET" type="string" required>
+  S3 bucket name for storing archived data.
+  
+  ```bash
+  S3_BUCKET=pongo-archives
+  ```
+</ParamField>
+
+<ParamField path="S3_REGION" type="string" required>
+  AWS region where the S3 bucket is located.
+  
+  ```bash
+  S3_REGION=us-east-1
+  ```
+</ParamField>
+
+<ParamField path="S3_ACCESS_KEY_ID" type="string" required>
+  AWS access key ID for S3 authentication.
+  
+  ```bash
+  S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+  ```
+</ParamField>
+
+<ParamField path="S3_SECRET_ACCESS_KEY" type="string" required>
+  AWS secret access key for S3 authentication.
+  
+  ```bash
+  S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+  ```
+</ParamField>
+
+<ParamField path="S3_PREFIX" type="string">
+  Prefix for S3 object keys. Useful for organizing archives in a shared bucket.
+  
+  ```bash
+  S3_PREFIX=production/archives
+  # Results in: s3://pongo-archives/production/archives/year=2025/month=12/...
+  ```
+</ParamField>
+
+### S3 Bucket Setup
+
+Create an S3 bucket for archives:
+
+```bash
+aws s3 mb s3://pongo-archives --region us-east-1
+```
+
+Create an IAM policy with required permissions:
+
+```json iam-policy.json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::pongo-archives",
+        "arn:aws:s3:::pongo-archives/*"
+      ]
+    }
+  ]
+}
+```
+
+Create IAM user and attach policy:
+
+```bash
+aws iam create-user --user-name pongo-archiver
+aws iam put-user-policy --user-name pongo-archiver --policy-name PongoArchiveAccess --policy-document file://iam-policy.json
+aws iam create-access-key --user-name pongo-archiver
+```
+
+## Local Archival
+
+Archive to local filesystem instead of S3.
+
+<ParamField path="ARCHIVAL_LOCAL_PATH" type="string" default="./archives">
+  Local filesystem path for archived data. Used when S3 is not configured.
+  
+  ```bash
+  ARCHIVAL_LOCAL_PATH=/data/pongo/archives
+  ```
+</ParamField>
+
+### Directory Structure
+
+Local archives use the same day-based partitioning as S3:
+
+```
+archives/
+└── year=2025/
+    └── month=12/
+        ├── day=01/
+        │   └── checks_20251201_batch001.parquet
+        ├── day=02/
+        │   └── checks_20251202_batch001.parquet
+        └── day=03/
+            ├── checks_20251203_batch001.parquet
+            └── checks_20251203_batch002.parquet
+```
+
+### Docker Volume Mount
+
+Mount a volume for persistent local archives:
+
+```yaml docker-compose.yml
+services:
+  archiver:
+    build: .
+    command: ["bun", "archiver"]
+    environment:
+      ARCHIVAL_ENABLED: "true"
+      ARCHIVAL_LOCAL_PATH: /data/archives
+    volumes:
+      - archive-data:/data/archives
+
+volumes:
+  archive-data:
+```
+
+## Complete Configuration Examples
+
+### S3 Archival (Production)
+
+```bash .env
+# Database
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+
+# Archival
+ARCHIVAL_ENABLED=true
+ARCHIVAL_RETENTION_DAYS=90
+ARCHIVAL_CRON="0 3 * * *"
+ARCHIVAL_BATCH_SIZE=50000
+
+# S3
+S3_BUCKET=pongo-archives
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+S3_PREFIX=production/archives
+
+# API
+ARCHIVER_PORT=3002
+```
+
+### Local Archival (Development)
+
+```bash .env
+# Database
+DATABASE_URL=file:./pongo/pongo.db
+
+# Archival
+ARCHIVAL_ENABLED=true
+ARCHIVAL_RETENTION_DAYS=30
+ARCHIVAL_CRON="0 2 * * *"
+ARCHIVAL_BATCH_SIZE=10000
+ARCHIVAL_LOCAL_PATH=./archives
+
+# API
+ARCHIVER_PORT=3002
+```
+
+### Docker Compose (Full Stack)
+
+```yaml docker-compose.yml
+services:
+  pongo:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      ACCESS_CODE: your-password
+    depends_on: [db]
+
+  scheduler:
+    build: .
+    command: ["bun", "scheduler"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      SCHEDULER_PORT: "3001"
+    depends_on: [db]
+
+  archiver:
+    build: .
+    command: ["bun", "archiver"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      ARCHIVAL_ENABLED: "true"
+      ARCHIVAL_RETENTION_DAYS: "90"
+      ARCHIVAL_CRON: "0 3 * * *"
+      ARCHIVAL_BATCH_SIZE: "50000"
+      S3_BUCKET: pongo-archives
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      ARCHIVER_PORT: "3002"
+    depends_on: [db]
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pongo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+## Parquet File Format
+
+Archived data is stored as Parquet files for efficient storage and querying.
+
+### Schema
+
+Archived check results include:
+
+- `id` - Check result ID
+- `monitor_id` - Monitor identifier
+- `status` - Check status (up/down/degraded)
+- `response_time_ms` - Response time in milliseconds
+- `status_code` - HTTP status code (if applicable)
+- `message` - Additional message or error details
+- `checked_at` - Timestamp of the check
+- `region` - Region where check was performed
+
+### Querying Archives
+
+Use tools like DuckDB, AWS Athena, or Apache Spark to query archived Parquet files:
+
+```sql DuckDB Example
+-- Query local archives
+SELECT 
+  monitor_id,
+  AVG(response_time_ms) as avg_response_time,
+  COUNT(*) as total_checks,
+  SUM(CASE WHEN status = 'down' THEN 1 ELSE 0 END) as failures
+FROM read_parquet('archives/year=2025/month=12/*/*.parquet')
+WHERE checked_at >= '2025-12-01'
+GROUP BY monitor_id;
+```
+
+```sql AWS Athena Example
+-- Query S3 archives
+CREATE EXTERNAL TABLE pongo_archives (
+  id VARCHAR,
+  monitor_id VARCHAR,
+  status VARCHAR,
+  response_time_ms INT,
+  checked_at TIMESTAMP
+)
+PARTITIONED BY (year INT, month INT, day INT)
+STORED AS PARQUET
+LOCATION 's3://pongo-archives/production/archives/';
+
+-- Load partitions
+MSCK REPAIR TABLE pongo_archives;
+
+-- Query
+SELECT monitor_id, AVG(response_time_ms)
+FROM pongo_archives
+WHERE year=2025 AND month=12
+GROUP BY monitor_id;
+```
+
+## Monitoring the Archiver
+
+### Health Check
+
+Check archiver status:
+
+```bash
+curl http://localhost:3002/health
+```
+
+```json
+{
+  "status": "healthy",
+  "lastRun": "2025-12-08T03:00:00Z",
+  "nextRun": "2025-12-09T03:00:00Z",
+  "archivedRecords": 1500000,
+  "storage": "s3"
+}
+```
+
+### Docker Health Check
+
+```yaml docker-compose.yml
+archiver:
+  # ...
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+    interval: 60s
+    timeout: 10s
+    retries: 3
+```
+
+## Troubleshooting
+
+### Archiver Won't Start
+
+1. **Enable Archival**: Ensure `ARCHIVAL_ENABLED=true`
+2. **Database Connection**: Verify `DATABASE_URL` is correct
+3. **S3 Credentials**: Check S3 environment variables if using S3
+
+### S3 Upload Failures
+
+1. **Credentials**: Verify `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`
+2. **Bucket Permissions**: Ensure IAM user has `s3:PutObject` permission
+3. **Bucket Exists**: Verify bucket exists in the specified region
+4. **Network Access**: Check firewall rules and network connectivity
+
+### High Memory Usage
+
+1. **Reduce Batch Size**: Lower `ARCHIVAL_BATCH_SIZE`
+   ```bash
+   ARCHIVAL_BATCH_SIZE=5000
+   ```
+2. **Adjust Schedule**: Run archival more frequently with smaller batches
+3. **Monitor Database**: Check database memory usage during archival
+
+### Slow Archival
+
+1. **Increase Batch Size**: Raise `ARCHIVAL_BATCH_SIZE` if memory allows
+2. **Database Performance**: Optimize database indexes and query performance
+3. **S3 Region**: Use S3 region close to your archiver instance
+4. **Network Bandwidth**: Check network throughput to S3
+
+<Warning>
+  **Data Loss Prevention**: Always verify your first archival run completed successfully before relying on automatic archival. Check both the database and archive storage to ensure data was correctly transferred.
+</Warning>
+
+<Note>
+  **Storage Costs**: Parquet files are highly compressed, typically achieving 10-20x compression compared to raw database storage. Monitor your S3 storage costs and adjust retention periods as needed.
+</Note>
+
+<Tip>
+  **Testing**: Test archival with a short retention period (e.g., 7 days) first to verify your configuration works correctly before setting longer retention periods.
+</Tip>

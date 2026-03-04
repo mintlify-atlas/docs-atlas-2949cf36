@@ -1,0 +1,210 @@
+---
+title: Database Configuration
+description: Configure SQLite or PostgreSQL for Pongo
+---
+
+Pongo supports both SQLite and PostgreSQL databases. The database driver is automatically detected from your `DATABASE_URL` connection string.
+
+## Database Drivers
+
+### SQLite (Default)
+
+SQLite is the default database backend, perfect for development and small to medium deployments:
+
+- Zero configuration required
+- WAL mode enabled for better concurrency
+- Local file-based storage
+- No separate database server needed
+
+```bash
+# .env
+DATABASE_URL=file:./pongo/pongo.db
+```
+
+This is the default if no `DATABASE_URL` is specified.
+
+### PostgreSQL (Production Recommended)
+
+PostgreSQL is recommended for production deployments:
+
+- Better scalability and performance
+- ACID compliance with robust transaction support
+- Multi-region support
+- Better concurrent access handling
+
+```bash
+# .env
+DATABE_URL=postgres://user:password@localhost:5432/pongo
+```
+
+## Connection String Formats
+
+### SQLite
+
+<CodeGroup>
+```bash Local File
+DATABASE_URL=file:./pongo/pongo.db
+```
+
+```bash Absolute Path
+DATABASE_URL=file:/absolute/path/to/pongo.db
+```
+</CodeGroup>
+
+### PostgreSQL
+
+<CodeGroup>
+```bash Standard Format
+DATABASE_URL=postgres://username:password@host:5432/database
+```
+
+```bash With SSL
+DATABASE_URL=postgres://username:password@host:5432/database?sslmode=require
+```
+
+```bash Managed Service Example
+DATABASE_URL=postgres://user:pass@db.provider.com:5432/pongo?sslmode=require
+```
+</CodeGroup>
+
+## Auto-Detection
+
+The `DB_DRIVER` variable is automatically detected from your connection string:
+
+- Starts with `postgres://` → PostgreSQL driver
+- Starts with `file:` or other → SQLite driver
+
+You can manually override this if needed:
+
+```bash
+DB_DRIVER=pg        # Force PostgreSQL
+DB_DRIVER=sqlite    # Force SQLite
+```
+
+## Environment Variables
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `DATABASE_URL` | string | `file:./pongo/pongo.db` | Database connection string |
+| `DB_DRIVER` | `sqlite` \| `pg` | auto-detected | Database driver (auto-detected from URL) |
+
+## Running Migrations
+
+Migrations create and update your database schema. They run automatically during the build process, but you can also run them manually.
+
+### PostgreSQL Migrations
+
+```bash
+bun run db:pg:migrate
+```
+
+Run this command after setting your PostgreSQL `DATABASE_URL` for the first time, or when upgrading Pongo versions.
+
+### SQLite Migrations
+
+```bash
+bun run db:sqlite:migrate
+```
+
+Run this for SQLite databases. This is included in the quick start setup.
+
+### Automatic Migrations
+
+Migrations run automatically when you build for production:
+
+```bash
+bun run build
+```
+
+This ensures your database schema is always up to date with your deployed application version.
+
+## Database Studio
+
+Pongo uses Drizzle ORM, which includes Drizzle Studio for visual database management.
+
+### PostgreSQL Studio
+
+```bash
+bun run db:pg:studio
+```
+
+Opens Drizzle Studio connected to your PostgreSQL database.
+
+### SQLite Studio
+
+```bash
+bun run db:sqlite:studio
+```
+
+Opens Drizzle Studio connected to your SQLite database.
+
+## Multi-Region Setup
+
+When deploying multiple scheduler instances across regions, all schedulers should point to the same database:
+
+```bash
+# Region 1 (US East)
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+PONGO_REGION=us-east
+
+# Region 2 (EU West) - Same database
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+PONGO_REGION=eu-west
+```
+
+<Note>
+PostgreSQL is strongly recommended for multi-region deployments due to better concurrent access handling.
+</Note>
+
+## Docker Compose Example
+
+Here's a complete example with PostgreSQL:
+
+```yaml docker-compose.yml
+services:
+  pongo:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      ACCESS_CODE: your-password
+    depends_on: [db]
+
+  scheduler:
+    build: .
+    command: ["bun", "scheduler"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+    depends_on: [db]
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pongo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+If you're having trouble connecting to your database:
+
+1. Verify your `DATABASE_URL` is correct
+2. Check that the database server is running
+3. Ensure network access (firewall rules, security groups)
+4. For PostgreSQL, verify SSL requirements match your connection string
+
+### Migration Failures
+
+If migrations fail:
+
+1. Check database permissions (CREATE TABLE, ALTER TABLE)
+2. Ensure the database exists (Pongo doesn't auto-create databases)
+3. Review migration logs for specific errors
+4. For PostgreSQL, ensure your user has schema creation rights

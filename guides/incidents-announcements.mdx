@@ -1,0 +1,347 @@
+---
+title: Incidents & Announcements
+description: Create markdown-based incidents and announcements that display on your status pages
+---
+
+Pongo supports markdown-based incidents and announcements that appear on dashboards and public status pages. Both are version-controlled alongside your code.
+
+## Incidents
+
+Incidents document outages and issues with severity tracking, status updates, and resolution timelines.
+
+### Creating an Incident
+
+<Steps>
+  <Step title="Create the markdown file">
+    Create a new file in `pongo/incidents/`, for example `api-outage.md`:
+
+    ```markdown
+    ---
+    dashboard: production
+    title: API Gateway Outage
+    severity: critical
+    status: resolved
+    affectedMonitors:
+      - api
+      - payment-gateway
+    createdAt: "2025-12-15T10:00:00Z"
+    resolvedAt: "2025-12-15T12:30:00Z"
+    ---
+
+    ## Investigating - Dec 15, 10:00 UTC
+
+    We are investigating reports of API timeouts affecting all endpoints.
+
+    ## Identified - Dec 15, 10:45 UTC
+
+    The issue has been identified as a database connection pool exhaustion.
+
+    ## Monitoring - Dec 15, 11:30 UTC
+
+    Connection pool has been scaled up. We are monitoring for recovery.
+
+    ## Resolved - Dec 15, 12:30 UTC
+
+    All systems have recovered. API response times have returned to normal.
+    ```
+  </Step>
+
+  <Step title="View on dashboard">
+    The incident will automatically appear on the specified dashboard(s) at:
+    - Private: `/dashboards/production`
+    - Public: `/shared/production`
+  </Step>
+</Steps>
+
+### Incident Frontmatter
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dashboard` | `string` | Yes | Dashboard slug to display on |
+| `title` | `string` | Yes | Incident title |
+| `severity` | `"critical" \| "major" \| "minor"` | Yes | Incident severity |
+| `status` | `"investigating" \| "identified" \| "monitoring" \| "resolved"` | Yes | Current incident status |
+| `affectedMonitors` | `string[]` | No | List of affected monitor IDs |
+| `createdAt` | `string` | Yes | ISO 8601 timestamp |
+| `resolvedAt` | `string` | No | ISO 8601 timestamp (only if resolved) |
+
+### Incident Types
+
+#### Critical Incident
+
+```markdown
+---
+dashboard: production
+title: Complete Service Outage
+severity: critical
+status: investigating
+affectedMonitors:
+  - api
+  - database
+  - cdn
+createdAt: "2025-12-15T10:00:00Z"
+---
+
+All services are currently unavailable. We are investigating the root cause.
+```
+
+#### Major Incident
+
+```markdown
+---
+dashboard: production
+title: Payment Processing Delays
+severity: major
+status: monitoring
+affectedMonitors:
+  - payment-gateway
+createdAt: "2025-12-15T14:00:00Z"
+---
+
+Payment processing is experiencing delays of 5-10 minutes.
+```
+
+#### Minor Incident
+
+```markdown
+---
+dashboard: production
+title: Elevated Error Rate
+severity: minor
+status: resolved
+affectedMonitors:
+  - api
+createdAt: "2025-12-15T09:00:00Z"
+resolvedAt: "2025-12-15T09:45:00Z"
+---
+
+Brief spike in API errors. Resolved by restarting affected nodes.
+```
+
+### Status Progression
+
+Typical incident lifecycle:
+
+1. **investigating** - Issue detected, cause unknown
+2. **identified** - Root cause found
+3. **monitoring** - Fix applied, monitoring recovery
+4. **resolved** - Fully resolved, services restored
+
+### Timeline Updates
+
+Update incidents with chronological sections:
+
+```markdown
+---
+title: Database Connectivity Issues
+severity: critical
+status: resolved
+createdAt: "2025-12-15T08:00:00Z"
+resolvedAt: "2025-12-15T10:30:00Z"
+---
+
+## Investigating - Dec 15, 08:00 UTC
+
+Database queries are timing out.
+
+## Identified - Dec 15, 08:30 UTC
+
+Network partition between app servers and database cluster.
+
+## Monitoring - Dec 15, 09:15 UTC
+
+Network connectivity restored. Monitoring for stability.
+
+## Resolved - Dec 15, 10:30 UTC
+
+All database connections stable. Services fully operational.
+```
+
+## Announcements
+
+Announcements communicate scheduled maintenance, new features, and general updates.
+
+### Creating an Announcement
+
+<Steps>
+  <Step title="Create the markdown file">
+    Create a new file in `pongo/announcements/`, for example `maintenance.md`:
+
+    ```markdown
+    ---
+    dashboard: production
+    title: Scheduled Database Maintenance
+    type: maintenance
+    createdAt: "2025-12-10T00:00:00Z"
+    expiresAt: "2025-12-16T06:00:00Z"
+    ---
+
+    We will be performing database maintenance on **December 15th, 2025** from 2:00 AM to 4:00 AM UTC.
+
+    During this window, you may experience:
+    - Brief service interruptions (< 1 minute)
+    - Slightly elevated response times
+
+    No action is required on your part.
+    ```
+  </Step>
+
+  <Step title="View on dashboard">
+    The announcement appears on the dashboard until the `expiresAt` timestamp.
+  </Step>
+</Steps>
+
+### Announcement Frontmatter
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dashboard` | `string` | Yes | Dashboard slug to display on |
+| `title` | `string` | Yes | Announcement title |
+| `type` | `"maintenance" \| "update" \| "notice"` | Yes | Announcement type |
+| `createdAt` | `string` | Yes | ISO 8601 timestamp |
+| `expiresAt` | `string` | No | ISO 8601 timestamp (auto-hides after) |
+
+### Announcement Types
+
+#### Maintenance
+
+```markdown
+---
+dashboard: production
+title: Scheduled Maintenance Window
+type: maintenance
+createdAt: "2025-12-10T00:00:00Z"
+expiresAt: "2025-12-16T06:00:00Z"
+---
+
+Planned maintenance on December 15th from 2-4 AM UTC.
+```
+
+#### Update
+
+```markdown
+---
+dashboard: production
+title: New Monitoring Features
+type: update
+createdAt: "2025-12-01T00:00:00Z"
+---
+
+We've added latency percentile tracking (P50, P95, P99) to all dashboards.
+```
+
+#### Notice
+
+```markdown
+---
+dashboard: production
+title: Status Page Now Available
+type: notice
+createdAt: "2025-11-15T00:00:00Z"
+---
+
+Subscribe to our RSS feed at `/shared/production/feed.xml` for real-time updates.
+```
+
+## Display on Dashboards
+
+Incidents and announcements appear on dashboards in priority order:
+
+1. **Active incidents** (by severity: critical → major → minor)
+2. **Recent resolved incidents** (last 7 days)
+3. **Active announcements** (by type: maintenance → update → notice)
+
+### Dashboard Filtering
+
+Use the `dashboard` field to control where items appear:
+
+```markdown
+# Appears only on production dashboard
+---
+dashboard: production
+---
+
+# Appears on multiple dashboards (if supported)
+---
+dashboard: production,staging
+---
+```
+
+## Best Practices
+
+### For Incidents
+
+- **Update frequently** - Keep customers informed with regular timeline updates
+- **Be specific** - Include affected services and impact details
+- **Set severity accurately** - Use critical for full outages, major for significant degradation, minor for small issues
+- **Link monitors** - Use `affectedMonitors` to correlate with monitor data
+- **Update status** - Progress through investigating → identified → monitoring → resolved
+
+### For Announcements
+
+- **Set expiry dates** - Use `expiresAt` to auto-hide time-sensitive announcements
+- **Use maintenance type** - For scheduled downtime or planned work
+- **Keep it concise** - Status pages should be scannable
+- **Include timezones** - Always specify UTC or local timezone
+
+## Example Files
+
+### Complete Incident
+
+```markdown
+---
+dashboard: production
+title: Payment Gateway Outage
+severity: critical
+status: resolved
+affectedMonitors:
+  - payment-gateway
+  - checkout-api
+createdAt: "2025-12-01T10:00:00Z"
+resolvedAt: "2025-12-01T11:30:00Z"
+---
+
+## Investigating - Dec 1, 10:00 UTC
+
+Payment gateway is completely unreachable. All payment requests are timing out.
+
+## Identified - Dec 1, 10:30 UTC
+
+Root cause: upstream provider network partition. Working with provider to resolve.
+
+## Monitoring - Dec 1, 11:00 UTC
+
+Provider has restored connectivity. Processing backlogged transactions.
+
+## Resolved - Dec 1, 11:30 UTC
+
+All systems restored. Payment processing has returned to normal.
+```
+
+### Complete Announcement
+
+```markdown
+---
+dashboard: production
+title: Database Upgrade - Improved Performance
+type: maintenance
+createdAt: "2025-12-08T00:00:00Z"
+expiresAt: "2025-12-15T06:00:00Z"
+---
+
+We will be upgrading our database cluster on **December 14th, 2025** from 2:00 AM to 4:00 AM UTC.
+
+### Expected Impact
+
+- Brief service interruptions (< 30 seconds)
+- No data loss
+- Improved query performance after completion
+
+### Benefits
+
+- 40% faster query execution
+- Increased connection pool capacity
+- Enhanced monitoring capabilities
+
+You will receive a notification once the upgrade is complete.
+```

@@ -1,80 +1,331 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get Pongo running locally in minutes
 ---
 
-## Get started in three steps
+Get Pongo up and running on your local machine in just a few minutes. This guide will walk you through installation, configuration, and creating your first monitor.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, make sure you have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+- [Bun](https://bun.sh) installed (v1.0 or later)
+- Git installed
+- A code editor (VS Code, Cursor, etc.)
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone Pongo from GitHub and navigate to the project directory:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    git clone https://github.com/TimMikeladze/pongo.git
+    cd pongo
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all required dependencies using Bun:
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    ```bash
+    bun install
+    ```
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <Note>
+      Pongo uses Bun as its runtime. If you don't have Bun installed, visit [bun.sh](https://bun.sh) for installation instructions.
+    </Note>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Configure environment variables">
+    Copy the example environment file to create your own configuration:
+    
+    ```bash
+    cp .env.example .env
+    ```
+    
+    The default configuration uses SQLite, which requires no additional setup. For production deployments, see the [Database Configuration](/deployment/database) guide.
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Run database migrations">
+    Create the required database tables:
+    
+    <Tabs>
+      <Tab title="SQLite (Default)">
+        ```bash
+        bun run db:sqlite:migrate
+        ```
+        
+        This creates a SQLite database file at `pongo/pongo.db`.
+      </Tab>
+      
+      <Tab title="PostgreSQL">
+        First, set your PostgreSQL connection string in `.env`:
+        
+        ```bash .env
+        DATABASE_URL=postgres://user:password@localhost:5432/pongo
+        ```
+        
+        Then run the PostgreSQL migrations:
+        
+        ```bash
+        bun run db:pg:migrate
+        ```
+      </Tab>
+    </Tabs>
+    
+    <Info>
+      The database driver is auto-detected from your `DATABASE_URL`. No additional configuration needed.
+    </Info>
+  </Step>
 
-### Step 3: Go live
+  <Step title="Start the development server">
+    Start the Next.js development server:
+    
+    ```bash
+    bun dev
+    ```
+    
+    Open [http://localhost:3000](http://localhost:3000) in your browser. You should see the Pongo dashboard.
+  </Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+  <Step title="Start the scheduler">
+    Open a **second terminal** in the same directory and start the scheduler service:
+    
+    ```bash
+    bun scheduler
+    ```
+    
+    The scheduler runs your monitors on their configured schedules and evaluates alert conditions.
+    
+    <Note>
+      The scheduler runs as a separate process. In production, you can run it on the same server or deploy it separately. See [Scheduler Setup](/deployment/scheduler-setup) for details.
+    </Note>
+  </Step>
+</Steps>
 
-## Next steps
+## Create Your First Monitor
 
-Now that you have your docs running, explore these key features:
+Now that Pongo is running, let's create a simple HTTP health check monitor.
+
+<Steps>
+  <Step title="Create a monitor file">
+    Create a new file in `pongo/monitors/` called `my-api.ts`:
+    
+    ```typescript pongo/monitors/my-api.ts
+    import { monitor } from "../../src/lib/config-types";
+
+    export default monitor({
+      name: "My API",
+      interval: "1m",
+      timeout: "30s",
+
+      async handler() {
+        const start = Date.now();
+        
+        try {
+          const res = await fetch("https://api.example.com/health");
+          const responseTime = Date.now() - start;
+          
+          return {
+            status: res.ok ? "up" : "down",
+            responseTime,
+            statusCode: res.status,
+          };
+        } catch (error) {
+          return {
+            status: "down",
+            responseTime: Date.now() - start,
+            message: error instanceof Error ? error.message : "Unknown error",
+          };
+        }
+      },
+    });
+    ```
+    
+    <Note>
+      Replace `https://api.example.com/health` with your actual API endpoint.
+    </Note>
+  </Step>
+
+  <Step title="Register the monitor">
+    Add your monitor to `pongo/monitors/index.ts`:
+    
+    ```typescript pongo/monitors/index.ts
+    import myApi from "./my-api";
+    
+    export default {
+      myApi,
+    };
+    ```
+  </Step>
+
+  <Step title="View your monitor">
+    The scheduler will automatically pick up your new monitor and start running it every minute. Visit [http://localhost:3000/monitors](http://localhost:3000/monitors) to see it in action.
+    
+    <Info>
+      It may take up to a minute for the first check to run. Refresh the page to see the latest results.
+    </Info>
+  </Step>
+</Steps>
+
+## Add Alerts (Optional)
+
+Make your monitor more useful by adding alerts that notify you when things go wrong.
+
+<Steps>
+  <Step title="Configure a notification channel">
+    Edit `pongo/channels.ts` to add a webhook endpoint:
+    
+    ```typescript pongo/channels.ts
+    import { channels } from "../src/lib/config-types";
+
+    export default channels({
+      slack: {
+        type: "webhook",
+        url: process.env.SLACK_WEBHOOK_URL!,
+      },
+    });
+    ```
+    
+    Then add your Slack webhook URL to `.env`:
+    
+    ```bash .env
+    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+    ```
+  </Step>
+
+  <Step title="Add an alert to your monitor">
+    Update your monitor to include alert configuration:
+    
+    ```typescript pongo/monitors/my-api.ts
+    import { monitor } from "../../src/lib/config-types";
+
+    export default monitor({
+      name: "My API",
+      interval: "1m",
+      timeout: "30s",
+      
+      alerts: [
+        {
+          id: "my-api-down",
+          name: "API Down",
+          condition: { consecutiveFailures: 3 },
+          channels: ["slack"],
+          severity: "critical",
+        },
+      ],
+
+      async handler() {
+        // ... same as before
+      },
+    });
+    ```
+    
+    This alert fires after 3 consecutive failures and sends a webhook to your Slack channel.
+  </Step>
+</Steps>
+
+## Create a Status Page (Optional)
+
+Share your monitor status publicly with a beautiful status page.
+
+<Steps>
+  <Step title="Create a dashboard">
+    Create a new file `pongo/dashboards/public.ts`:
+    
+    ```typescript pongo/dashboards/public.ts
+    import type { DashboardConfig } from "@/lib/config-types";
+
+    export default {
+      name: "Public Status",
+      slug: "status",
+      public: true,
+      monitors: ["myApi"],
+      slaTarget: 99.9,
+    } satisfies DashboardConfig;
+    ```
+  </Step>
+
+  <Step title="Register the dashboard">
+    Add it to `pongo/dashboards/index.ts`:
+    
+    ```typescript pongo/dashboards/index.ts
+    import publicDashboard from "./public";
+    
+    export default {
+      public: publicDashboard,
+    };
+    ```
+  </Step>
+
+  <Step title="View your status page">
+    Visit [http://localhost:3000/shared/status](http://localhost:3000/shared/status) to see your public status page.
+    
+    The page includes:
+    - Current monitor status
+    - Response time charts
+    - Uptime percentage
+    - Historical data
+    - RSS/Atom feeds
+  </Step>
+</Steps>
+
+## Next Steps
+
+You now have a working Pongo installation! Here's what to explore next:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core Concepts" icon="book-open" href="/concepts/monitors">
+    Learn about monitors, alerts, dashboards, and channels in depth
+  </Card>
+  
+  <Card title="Deployment Guide" icon="rocket" href="/deployment/overview">
+    Deploy Pongo to production with Vercel, Fly.io, Docker, or self-hosted
+  </Card>
+  
+  <Card title="Creating Monitors" icon="chart-line" href="/guides/creating-monitors">
+    Explore different monitor types and advanced patterns
+  </Card>
+  
+  <Card title="Configuring Alerts" icon="bell" href="/guides/configuring-alerts">
+    Set up sophisticated alert conditions and notifications
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Troubleshooting
+
+<Accordion title="Scheduler not picking up monitors">
+  Make sure:
+  1. The scheduler is running (`bun scheduler`)
+  2. Your monitor is registered in `pongo/monitors/index.ts`
+  3. There are no TypeScript errors in your monitor file
+  4. You've waited at least one interval period
+</Accordion>
+
+<Accordion title="Database connection errors">
+  If using PostgreSQL:
+  1. Verify your `DATABASE_URL` in `.env` is correct
+  2. Make sure PostgreSQL is running
+  3. Check that the database exists
+  4. Verify user permissions
+  
+  If using SQLite:
+  1. Check that `pongo/pongo.db` exists
+  2. Verify file permissions
+</Accordion>
+
+<Accordion title="Port already in use">
+  If port 3000 or 3001 is already in use:
+  
+  ```bash .env
+  PORT=3001  # For Next.js app
+  SCHEDULER_PORT=3002  # For scheduler
+  ```
+</Accordion>
+
+## Getting Help
+
+- Check the [Guides](/guides/creating-monitors) for detailed instructions
+- Review the [API Reference](/api/monitor-config) for complete type documentation
+- Open an issue on [GitHub](https://github.com/TimMikeladze/pongo/issues)

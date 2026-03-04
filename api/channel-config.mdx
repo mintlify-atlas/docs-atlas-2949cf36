@@ -1,0 +1,343 @@
+---
+title: "ChannelConfig"
+description: "Notification channel configuration for webhook integrations"
+---
+
+## ChannelConfig Interface
+
+Defines a webhook endpoint for alert notifications.
+
+```typescript
+interface ChannelConfig {
+  type: "webhook";
+  url: string;
+  headers?: Record<string, string>;
+}
+```
+
+### Fields
+
+<ParamField path="type" type="'webhook'" required>
+  Channel type
+  
+  Currently only `"webhook"` is supported. Future versions may support email, Slack, PagerDuty, etc.
+</ParamField>
+
+<ParamField path="url" type="string" required>
+  Webhook endpoint URL
+  
+  Pongo sends POST requests with alert payloads to this URL. Must be HTTPS in production.
+</ParamField>
+
+<ParamField path="headers" type="Record<string, string>">
+  Custom HTTP headers for webhook requests
+  
+  Use for authentication tokens, content type, or custom routing headers.
+  
+  **Example:**
+  ```typescript
+  headers: {
+    "Authorization": "Bearer token",
+    "X-Custom-Header": "value"
+  }
+  ```
+</ParamField>
+
+## ChannelsConfig Type
+
+Map of channel IDs to configurations.
+
+```typescript
+type ChannelsConfig = Record<string, ChannelConfig>
+```
+
+Channel IDs are referenced in `AlertConfig.channels` arrays.
+
+## channels() Helper
+
+Type-safe wrapper for channel configuration.
+
+```typescript
+function channels(config: ChannelsConfig): ChannelsConfig
+```
+
+### Usage
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "ops-team": {
+    type: "webhook",
+    url: process.env.OPS_WEBHOOK_URL!,
+  },
+});
+```
+
+## Webhook Payload
+
+Pongo sends this JSON payload to webhook URLs:
+
+```typescript
+interface WebhookPayload {
+  event: "alert.fired" | "alert.resolved";
+  alert: {
+    id: string;
+    name: string;
+    monitorId: string;
+    monitorName: string;
+    severity: "critical" | "warning" | "info";
+  };
+  timestamp: string;  // ISO 8601
+  snapshot: {
+    consecutiveFailures: number;
+    consecutiveSuccesses: number;
+    lastStatus: string;
+    lastResponseTimeMs: number | null;
+    lastMessage: string | null;
+  };
+  checkResult: {
+    id: string;
+    status: string;
+    responseTimeMs: number;
+    message: string | null;
+    checkedAt: string;  // ISO 8601
+  };
+  region?: string;
+  firingRegions?: string[];
+  healthyRegions?: string[];
+}
+```
+
+### Example Payload: Alert Fired
+
+```json
+{
+  "event": "alert.fired",
+  "alert": {
+    "id": "api-down",
+    "name": "API Down",
+    "monitorId": "api",
+    "monitorName": "Production API",
+    "severity": "critical"
+  },
+  "timestamp": "2026-03-04T10:30:00.000Z",
+  "snapshot": {
+    "consecutiveFailures": 3,
+    "consecutiveSuccesses": 0,
+    "lastStatus": "down",
+    "lastResponseTimeMs": 5234,
+    "lastMessage": "HTTP 503"
+  },
+  "checkResult": {
+    "id": "check_xyz789",
+    "status": "down",
+    "responseTimeMs": 5234,
+    "message": "HTTP 503",
+    "checkedAt": "2026-03-04T10:30:00.000Z"
+  },
+  "region": "us-east-1",
+  "firingRegions": ["us-east-1", "eu-west-1"],
+  "healthyRegions": ["ap-southeast-1"]
+}
+```
+
+### Example Payload: Alert Resolved
+
+```json
+{
+  "event": "alert.resolved",
+  "alert": {
+    "id": "api-down",
+    "name": "API Down",
+    "monitorId": "api",
+    "monitorName": "Production API",
+    "severity": "critical"
+  },
+  "timestamp": "2026-03-04T10:35:00.000Z",
+  "snapshot": {
+    "consecutiveFailures": 0,
+    "consecutiveSuccesses": 2,
+    "lastStatus": "up",
+    "lastResponseTimeMs": 234,
+    "lastMessage": null
+  },
+  "checkResult": {
+    "id": "check_abc123",
+    "status": "up",
+    "responseTimeMs": 234,
+    "message": null,
+    "checkedAt": "2026-03-04T10:35:00.000Z"
+  }
+}
+```
+
+## Real Examples
+
+### Basic Webhook
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "ops-team": {
+    type: "webhook",
+    url: "https://hooks.example.com/alerts",
+  },
+});
+```
+
+### Webhook with Authentication
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "ops-team": {
+    type: "webhook",
+    url: process.env.OPS_WEBHOOK_URL!,
+    headers: {
+      "Authorization": `Bearer ${process.env.WEBHOOK_TOKEN}`,
+    },
+  },
+});
+```
+
+### Multiple Channels
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "ops-team": {
+    type: "webhook",
+    url: process.env.OPS_WEBHOOK_URL!,
+    headers: {
+      "Authorization": `Bearer ${process.env.OPS_TOKEN}`,
+    },
+  },
+  "engineering": {
+    type: "webhook",
+    url: process.env.ENG_WEBHOOK_URL!,
+    headers: {
+      "Authorization": `Bearer ${process.env.ENG_TOKEN}`,
+    },
+  },
+  "pagerduty": {
+    type: "webhook",
+    url: "https://events.pagerduty.com/v2/enqueue",
+    headers: {
+      "Authorization": `Token token=${process.env.PAGERDUTY_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+  },
+});
+```
+
+### Slack Webhook
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "slack-ops": {
+    type: "webhook",
+    url: process.env.SLACK_WEBHOOK_URL!,
+  },
+});
+```
+
+### Discord Webhook
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "discord-ops": {
+    type: "webhook",
+    url: process.env.DISCORD_WEBHOOK_URL!,
+  },
+});
+```
+
+### Custom Headers for Routing
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "internal-api": {
+    type: "webhook",
+    url: "https://internal.example.com/webhook",
+    headers: {
+      "X-Service": "pongo",
+      "X-Environment": process.env.NODE_ENV!,
+      "X-API-Key": process.env.INTERNAL_API_KEY!,
+    },
+  },
+});
+```
+
+## Webhook Integration Guide
+
+### Receiving Webhooks
+
+Your webhook endpoint should:
+
+1. Accept POST requests with JSON payload
+2. Respond with 2xx status code (200-299)
+3. Process payload asynchronously if needed
+4. Handle both `alert.fired` and `alert.resolved` events
+
+### Example Express Handler
+
+```typescript
+app.post("/webhook/pongo", express.json(), (req, res) => {
+  const payload: WebhookPayload = req.body;
+  
+  if (payload.event === "alert.fired") {
+    console.log(`Alert fired: ${payload.alert.name}`);
+    console.log(`Severity: ${payload.alert.severity}`);
+    console.log(`Monitor: ${payload.alert.monitorName}`);
+    console.log(`Status: ${payload.checkResult.status}`);
+    console.log(`Message: ${payload.checkResult.message}`);
+  } else if (payload.event === "alert.resolved") {
+    console.log(`Alert resolved: ${payload.alert.name}`);
+  }
+  
+  res.status(200).json({ received: true });
+});
+```
+
+### Retry Behavior
+
+Pongo retries failed webhook deliveries:
+- Retries on 5xx errors or network failures
+- Does not retry on 4xx client errors
+- Exponential backoff between retries
+- Maximum 3 retry attempts
+
+### Security
+
+1. Use HTTPS URLs in production
+2. Validate webhook signatures (coming soon)
+3. Use authentication headers
+4. Whitelist Pongo IP addresses if needed
+
+## File Location
+
+Channel configuration must be in:
+
+```
+pongo/channels.ts
+```
+
+This file is required even if empty. Use the starter template:
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  // Add your channels here
+});
+```

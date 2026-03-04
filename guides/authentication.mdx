@@ -1,0 +1,356 @@
+---
+title: Authentication
+description: Secure your Pongo dashboard with password-based authentication and session management
+---
+
+By default, Pongo's dashboard is open to anyone who can reach it. Enable authentication to password-protect your monitoring dashboard while keeping public status pages accessible.
+
+## Enabling Authentication
+
+<Steps>
+  <Step title="Set ACCESS_CODE environment variable">
+    Add an access code to your environment configuration:
+
+    ```bash
+    # .env
+    ACCESS_CODE=your-secret-password
+    ```
+
+    Or set it directly in your hosting environment:
+
+    ```bash
+    # Fly.io
+    fly secrets set ACCESS_CODE="your-secret-password"
+
+    # Vercel
+    vercel env add ACCESS_CODE
+
+    # Docker
+    docker run -e ACCESS_CODE="your-secret-password" pongo
+    ```
+  </Step>
+
+  <Step title="Restart the application">
+    Restart Pongo to apply the authentication requirement:
+
+    ```bash
+    bun dev
+    # or
+    bun start
+    ```
+  </Step>
+
+  <Step title="Access the dashboard">
+    When you visit the dashboard, you'll be redirected to `/login` and prompted for the access code.
+  </Step>
+</Steps>
+
+## ACCESS_CODE Environment Variable
+
+The `ACCESS_CODE` variable controls dashboard authentication:
+
+| State | Behavior |
+|-------|----------|
+| **Not set** | Dashboard is publicly accessible (default) |
+| **Set** | Dashboard requires authentication |
+
+### Setting ACCESS_CODE
+
+```bash
+# Development (.env file)
+ACCESS_CODE=my-secure-password
+
+# Production (hosting provider)
+ACCESS_CODE=use-a-strong-random-password
+```
+
+**Security recommendations:**
+- Use a long, random password
+- Don't commit `.env` to version control
+- Rotate periodically
+- Consider using a password manager
+
+Generate a secure password:
+
+```bash
+openssl rand -base64 32
+```
+
+## Session Configuration
+
+Pongo uses [iron-session](https://github.com/vvo/iron-session) for encrypted session cookies.
+
+### Session Duration
+
+Configure how long sessions last with `EXPIRY_DAYS`:
+
+```bash
+# .env
+ACCESS_CODE=your-password
+EXPIRY_DAYS=7  # Sessions last 7 days (default)
+```
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EXPIRY_DAYS` | `number` | `7` | Number of days before session expires |
+
+### Session Behavior
+
+- Sessions are stored as encrypted cookies
+- Sessions persist across browser restarts (until expiry)
+- Closing the browser does not end the session
+- Changing `ACCESS_CODE` invalidates all existing sessions
+- Sessions are automatically refreshed on each request
+
+### Example Configurations
+
+```bash
+# Short-lived sessions (1 day)
+EXPIRY_DAYS=1
+
+# Long-lived sessions (30 days)
+EXPIRY_DAYS=30
+
+# Very short sessions (1 hour = 0.04 days)
+EXPIRY_DAYS=0.04
+```
+
+## Public Routes
+
+These routes are always accessible, even when authentication is enabled:
+
+| Route | Description |
+|-------|-------------|
+| `/` | Landing page |
+| `/shared/*` | Public status pages |
+| `/shared/[slug]/feed.xml` | RSS feeds |
+| `/shared/[slug]/feed.atom` | Atom feeds |
+| `/login` | Login page |
+| `/api/*` | API endpoints |
+
+All other routes require authentication when `ACCESS_CODE` is set.
+
+### Public Status Pages
+
+Dashboards marked as `public: true` remain accessible without authentication:
+
+```typescript
+// pongo/dashboards/status.ts
+export default {
+  name: "Status",
+  slug: "status",
+  public: true,  // Accessible at /shared/status (no auth required)
+  monitors: ["api"],
+} satisfies DashboardConfig;
+```
+
+## Login Flow
+
+<Steps>
+  <Step title="User visits protected route">
+    User navigates to any dashboard route (e.g., `/monitors`, `/dashboards/production`, `/alerts`).
+  </Step>
+
+  <Step title="Redirect to login">
+    If not authenticated, user is redirected to `/login`.
+  </Step>
+
+  <Step title="Enter access code">
+    User enters the `ACCESS_CODE` password.
+  </Step>
+
+  <Step title="Session created">
+    On successful login:
+    - Encrypted session cookie is created
+    - User is redirected to original destination
+    - Session lasts for `EXPIRY_DAYS`
+  </Step>
+</Steps>
+
+## Deployment Examples
+
+### Vercel
+
+```bash
+# Set via Vercel CLI
+vercel env add ACCESS_CODE production
+vercel env add EXPIRY_DAYS production
+
+# Or via Vercel Dashboard
+# Settings → Environment Variables
+# Add ACCESS_CODE and EXPIRY_DAYS
+```
+
+### Fly.io
+
+```bash
+# Set secrets
+fly secrets set ACCESS_CODE="your-secure-password"
+fly secrets set EXPIRY_DAYS="7"
+
+# Deploy
+fly deploy
+```
+
+### Docker Compose
+
+```yaml
+services:
+  pongo:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      ACCESS_CODE: your-secure-password
+      EXPIRY_DAYS: 7
+    depends_on: [db]
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pongo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+### Docker
+
+```bash
+docker run -p 3000:3000 \
+  -e DATABASE_URL="file:./pongo.db" \
+  -e ACCESS_CODE="your-secure-password" \
+  -e EXPIRY_DAYS="7" \
+  pongo
+```
+
+## Disabling Authentication
+
+To disable authentication, remove or unset `ACCESS_CODE`:
+
+```bash
+# Remove from .env file
+# or unset in hosting environment
+
+# Fly.io
+fly secrets unset ACCESS_CODE
+
+# Vercel
+vercel env rm ACCESS_CODE production
+```
+
+After removing `ACCESS_CODE`, restart the application. All routes will be publicly accessible.
+
+## Security Best Practices
+
+### Strong Passwords
+
+Generate a cryptographically secure password:
+
+```bash
+# macOS/Linux
+openssl rand -base64 32
+
+# Node.js
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+### Environment Variables
+
+Never commit credentials:
+
+```bash
+# .gitignore
+.env
+.env.*
+!.env.example
+```
+
+Provide an example file:
+
+```bash
+# .env.example
+DATABASE_URL=file:./pongo.db
+ACCESS_CODE=change-this-to-a-secure-password
+EXPIRY_DAYS=7
+```
+
+### HTTPS
+
+Always use HTTPS in production to protect session cookies:
+
+- Vercel and Fly.io provide HTTPS automatically
+- For self-hosted deployments, use a reverse proxy (Nginx, Caddy) with TLS
+
+### Session Security
+
+The session implementation:
+
+- Uses encrypted cookies (AES-256-GCM via iron-session)
+- Includes CSRF protection
+- Sets `httpOnly`, `secure`, and `sameSite` cookie flags
+- Automatically rotates session secrets
+
+### Multiple Users
+
+Pongo currently supports a single shared access code. For multiple users:
+
+- Use a password manager to share the access code securely
+- Rotate the `ACCESS_CODE` when team members leave
+- Consider placing Pongo behind an SSO provider or VPN
+
+## Troubleshooting
+
+### Can't Log In
+
+If authentication isn't working:
+
+1. **Verify ACCESS_CODE is set**
+   ```bash
+   echo $ACCESS_CODE
+   ```
+
+2. **Check for typos** - The password is case-sensitive
+
+3. **Clear cookies** - Old session cookies may conflict
+
+4. **Restart the app** - Changes to `ACCESS_CODE` require restart
+
+5. **Check logs** - Look for authentication errors:
+   ```bash
+   bun dev
+   # or check production logs
+   ```
+
+### Session Expires Too Quickly
+
+Increase `EXPIRY_DAYS`:
+
+```bash
+EXPIRY_DAYS=30  # 30 days instead of 7
+```
+
+### Can't Access Public Status Page
+
+Public status pages should work without auth. Verify:
+
+1. **Dashboard is public**:
+   ```typescript
+   export default {
+     name: "Status",
+     slug: "status",
+     public: true,  // Must be true
+     monitors: ["api"],
+   } satisfies DashboardConfig;
+   ```
+
+2. **Using correct URL**:
+   - Public: `/shared/status` ✅
+   - Private: `/dashboards/status` ❌ (requires auth)
+
+### All Sessions Invalidated
+
+Changing `ACCESS_CODE` invalidates all existing sessions. Users must log in again with the new password.

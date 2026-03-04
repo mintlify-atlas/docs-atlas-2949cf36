@@ -1,0 +1,253 @@
+---
+title: "Scheduler Endpoints"
+description: "HTTP API endpoints for the Pongo scheduler service"
+---
+
+The scheduler service exposes an HTTP API (default port `3001`) for health checks, monitor state inspection, and manual trigger operations.
+
+## Base URL
+
+```
+http://localhost:3001
+```
+
+For production deployments, configure the base URL using the `SCHEDULER_URL` environment variable.
+
+## Endpoints
+
+### GET /health
+
+Health check endpoint that returns the scheduler status and region information.
+
+**Response**
+
+```json
+{
+  "status": "ok",
+  "region": "us-east"
+}
+```
+
+**Fields**
+
+- `status` (string): Always returns `"ok"` if the scheduler is running
+- `region` (string): The region identifier for this scheduler instance (from `PONGO_REGION`, `FLY_REGION`, or `"default"`)
+
+---
+
+### GET /monitors
+
+List all monitors with their current state.
+
+**Response**
+
+```json
+{
+  "monitors": [
+    {
+      "id": "api",
+      "region": "us-east",
+      "lastRun": "2025-12-08T10:30:00.000Z",
+      "lastStatus": "up",
+      "isRunning": false,
+      "consecutiveFailures": 0
+    },
+    {
+      "id": "database",
+      "region": "us-east",
+      "lastRun": "2025-12-08T10:29:45.000Z",
+      "lastStatus": "down",
+      "isRunning": false,
+      "consecutiveFailures": 3
+    }
+  ],
+  "region": "us-east"
+}
+```
+
+**Fields**
+
+- `monitors` (array): List of monitor states
+  - `id` (string): Monitor identifier
+  - `region` (string): Scheduler region
+  - `lastRun` (string|null): ISO 8601 timestamp of last execution
+  - `lastStatus` (string|null): Last status result (`"up"`, `"down"`, or `"degraded"`)
+  - `isRunning` (boolean): Whether the monitor is currently executing
+  - `consecutiveFailures` (number): Number of consecutive failures
+- `region` (string): The scheduler's region identifier
+
+---
+
+### GET /monitors/:id
+
+Get detailed state for a single monitor.
+
+**Parameters**
+
+- `id` (path): Monitor identifier
+
+**Response (Success)**
+
+```json
+{
+  "id": "api",
+  "lastRun": "2025-12-08T10:30:00.000Z",
+  "lastStatus": "up",
+  "lastResponseTime": 245,
+  "lastMessage": null,
+  "isRunning": false,
+  "consecutiveFailures": 0
+}
+```
+
+**Response (Monitor Not Found)**
+
+```json
+{
+  "error": "Monitor not found"
+}
+```
+
+Status code: `404`
+
+**Fields**
+
+- `id` (string): Monitor identifier
+- `lastRun` (string|null): ISO 8601 timestamp of last execution
+- `lastStatus` (string|null): Last status result (`"up"`, `"down"`, or `"degraded"`)
+- `lastResponseTime` (number|null): Response time in milliseconds
+- `lastMessage` (string|null): Optional status message from the monitor handler
+- `isRunning` (boolean): Whether the monitor is currently executing
+- `consecutiveFailures` (number): Number of consecutive failures
+
+---
+
+### POST /monitors/:id/trigger
+
+Manually trigger a single monitor execution.
+
+**Parameters**
+
+- `id` (path): Monitor identifier
+
+**Response (Success)**
+
+```json
+{
+  "triggered": true,
+  "id": "api",
+  "status": "up",
+  "responseTime": 312
+}
+```
+
+**Response (Monitor Not Found)**
+
+```json
+{
+  "error": "Monitor not found"
+}
+```
+
+Status code: `404`
+
+**Fields**
+
+- `triggered` (boolean): Always `true` on success
+- `id` (string): Monitor identifier
+- `status` (string|null): Status result after execution (`"up"`, `"down"`, or `"degraded"`)
+- `responseTime` (number|null): Response time in milliseconds
+
+**Example**
+
+```bash
+curl -X POST http://localhost:3001/monitors/api/trigger
+```
+
+---
+
+### POST /monitors/trigger
+
+Manually trigger multiple monitors in parallel. Used by the dashboard for bulk operations.
+
+**Request Body**
+
+```json
+{
+  "monitorIds": ["api", "database", "cdn"]
+}
+```
+
+**Response (Success)**
+
+```json
+{
+  "triggered": true,
+  "results": [
+    {
+      "id": "api",
+      "status": "up",
+      "responseTime": 245
+    },
+    {
+      "id": "database",
+      "status": "down",
+      "responseTime": 5001
+    },
+    {
+      "id": "cdn",
+      "error": "Monitor not found"
+    }
+  ]
+}
+```
+
+**Response (Invalid Request)**
+
+```json
+{
+  "error": "monitorIds array required"
+}
+```
+
+Status code: `400`
+
+**Fields**
+
+- `triggered` (boolean): Always `true` on success
+- `results` (array): Results for each monitor
+  - `id` (string): Monitor identifier
+  - `status` (string|null): Status result (`"up"`, `"down"`, or `"degraded"`), or `error` field if not found
+  - `responseTime` (number|null): Response time in milliseconds
+  - `error` (string): Error message if monitor not found
+
+**Example**
+
+```bash
+curl -X POST http://localhost:3001/monitors/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"monitorIds": ["api", "database"]}'
+```
+
+## Multi-Region Behavior
+
+Each scheduler instance includes its region identifier in responses. This is useful when running multiple schedulers across different geographic regions:
+
+```bash
+# Deploy schedulers in different regions
+PONGO_REGION=us-east bun scheduler
+PONGO_REGION=eu-west bun scheduler
+```
+
+All schedulers share the same database and coordinate check results. Use the `regionThreshold` option on alerts to control when they fire based on regional failures.
+
+## Manual Trigger from Dashboard
+
+To enable the manual run button in the dashboard UI, set:
+
+```bash
+SCHEDULER_URL=http://localhost:3001
+ENABLE_MANUAL_RUN=true
+```
+
+The dashboard will use the `/monitors/:id/trigger` and `/monitors/trigger` endpoints for manual executions.

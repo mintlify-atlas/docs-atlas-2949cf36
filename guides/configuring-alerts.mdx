@@ -1,0 +1,256 @@
+---
+title: Configuring Alerts
+description: Set up intelligent alerts with declarative conditions, severity levels, and webhook notifications
+---
+
+Alerts notify you when monitors detect issues. Pongo supports declarative conditions, callback-based logic, smart flap detection, and auto-resolution.
+
+## Basic Alert Setup
+
+<Steps>
+  <Step title="Define alerts in your monitor">
+    Add an `alerts` array to your monitor configuration:
+
+    ```typescript
+    import { monitor } from "../../src/lib/config-types";
+
+    export default monitor({
+      name: "API",
+      interval: "1m",
+      alerts: [
+        {
+          id: "api-down",
+          name: "API Down",
+          condition: { consecutiveFailures: 3 },
+          channels: ["slack"],
+          severity: "critical",
+        },
+      ],
+      async handler() {
+        const res = await fetch("https://api.example.com/health");
+        return {
+          status: res.ok ? "up" : "down",
+          responseTime: Date.now() - start,
+          statusCode: res.status,
+        };
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Configure notification channels">
+    Define your webhook channels in `pongo/channels.ts`:
+
+    ```typescript
+    import { channels } from "../src/lib/config-types";
+
+    export default channels({
+      slack: {
+        type: "webhook",
+        url: process.env.SLACK_WEBHOOK_URL!,
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Test your alerts">
+    The scheduler will evaluate alert conditions after each check and send notifications when alerts fire or resolve.
+  </Step>
+</Steps>
+
+## Declarative Conditions
+
+Pongo provides several built-in condition types:
+
+### Consecutive Failures
+
+Fire when a monitor fails multiple times in a row:
+
+```typescript
+condition: { consecutiveFailures: 3 }
+```
+
+### Consecutive Successes
+
+Fire when a monitor succeeds multiple times (useful for auto-resolve):
+
+```typescript
+condition: { consecutiveSuccesses: 2 }
+```
+
+### Latency Threshold
+
+Fire when response time exceeds a threshold for multiple checks:
+
+```typescript
+condition: { latencyAboveMs: 1000, forChecks: 5 }
+```
+
+### Status-Based
+
+Fire when the monitor reports a specific status:
+
+```typescript
+condition: { status: "down", forChecks: 3 }
+condition: { status: "degraded", forChecks: 5 }
+```
+
+### Time-Based
+
+Fire when a monitor is down or up for a specific duration:
+
+```typescript
+condition: { downForMs: 60000 }  // Down for 1 minute
+condition: { upForMs: 30000 }    // Up for 30 seconds
+```
+
+## Callback Conditions
+
+For complex logic, use a callback function with full access to check history:
+
+```typescript
+alerts: [
+  {
+    id: "custom-alert",
+    name: "Custom Condition",
+    condition: (result, history) => {
+      // Fire if 3 of the last 5 checks failed
+      const recentFails = history
+        .slice(-5)
+        .filter(r => r.status === "down").length;
+      return recentFails >= 3;
+    },
+    channels: ["slack"],
+    severity: "warning",
+  },
+]
+```
+
+The callback receives:
+- `result`: The current check result with `id`, `status`, `responseTimeMs`, `statusCode`, `message`, and `checkedAt`
+- `history`: Array of previous check results for context
+
+## Severity Levels
+
+Set the severity to control how alerts are displayed and prioritized:
+
+```typescript
+severity: "critical"  // Red badge, highest priority
+severity: "warning"   // Yellow badge, medium priority
+severity: "info"      // Blue badge, lowest priority
+```
+
+## Channel Configuration
+
+Specify which channels should receive notifications:
+
+```typescript
+// Single channel
+channels: ["slack"]
+
+// Multiple channels
+channels: ["slack", "pagerduty", "email"]
+```
+
+## Escalation
+
+Re-notify if an alert stays firing for a specific duration:
+
+```typescript
+alerts: [
+  {
+    id: "api-down",
+    name: "API Down",
+    condition: { consecutiveFailures: 3 },
+    channels: ["slack"],
+    severity: "critical",
+    escalateAfterMs: 300_000,  // Re-notify after 5 minutes
+  },
+]
+```
+
+## Complete Alert Example
+
+```typescript
+export default monitor({
+  name: "Production API",
+  interval: "1m",
+  timeout: "10s",
+  alerts: [
+    {
+      id: "api-critical",
+      name: "API Critical Failure",
+      condition: { consecutiveFailures: 3 },
+      channels: ["pagerduty", "slack"],
+      severity: "critical",
+      escalateAfterMs: 300_000,
+      regionThreshold: "majority",
+    },
+    {
+      id: "api-degraded",
+      name: "API Degraded Performance",
+      condition: { latencyAboveMs: 2000, forChecks: 5 },
+      channels: ["slack"],
+      severity: "warning",
+    },
+    {
+      id: "api-recovery",
+      name: "API Recovered",
+      condition: { consecutiveSuccesses: 2 },
+      channels: ["slack"],
+      severity: "info",
+    },
+  ],
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com/health");
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  },
+});
+```
+
+## Flap Detection
+
+Pongo automatically suppresses alerts that toggle too frequently:
+
+- If an alert toggles 3+ times within 10 minutes, notifications are paused
+- Flapping is tracked per alert, not per monitor
+- Notifications resume once the state stabilizes
+
+This prevents alert fatigue from intermittent issues.
+
+## Silencing Alerts
+
+You can silence alerts from the dashboard UI during maintenance windows or planned downtime. Silenced alerts:
+
+- Continue to evaluate conditions
+- Do not send notifications
+- Show a "silenced" indicator in the UI
+- Can be unsilenced at any time
+
+## Auto-Resolution
+
+Alerts automatically resolve when their condition is no longer met. You can configure separate conditions for firing and resolving:
+
+```typescript
+alerts: [
+  {
+    id: "api-down",
+    name: "API Down",
+    condition: { consecutiveFailures: 3 },
+    channels: ["slack"],
+    severity: "critical",
+  },
+  {
+    id: "api-recovered",
+    name: "API Recovered",
+    condition: { consecutiveSuccesses: 2 },
+    channels: ["slack"],
+    severity: "info",
+  },
+]
+```

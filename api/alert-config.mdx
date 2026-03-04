@@ -1,0 +1,364 @@
+---
+title: "AlertConfig"
+description: "Alert configuration schema with declarative and callback conditions"
+---
+
+## AlertConfig Interface
+
+Defines alert rules triggered by monitor check results.
+
+```typescript
+interface AlertConfig {
+  id: string;
+  name: string;
+  condition: AlertCondition;
+  channels: string[];
+  severity?: AlertSeverity;
+  regionThreshold?: RegionThreshold;
+  escalateAfterMs?: number;
+}
+```
+
+### Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the alert within the monitor
+  
+  Used for tracking alert state and deduplication.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable alert name
+  
+  Shown in notifications and alert history.
+</ParamField>
+
+<ParamField path="condition" type="AlertCondition" required>
+  When to trigger the alert
+  
+  Can be a declarative condition object or a callback function. See [Alert Conditions](#alert-conditions) below.
+</ParamField>
+
+<ParamField path="channels" type="string[]" required>
+  Channel IDs to notify when alert fires
+  
+  References channel names from `pongo/channels.ts`.
+  
+  **Example:** `["ops-team", "pagerduty"]`
+</ParamField>
+
+<ParamField path="severity" type="AlertSeverity" default="warning">
+  Alert severity level
+  
+  - `"critical"`: Immediate attention required
+  - `"warning"`: Issue needs investigation
+  - `"info"`: Informational notification
+</ParamField>
+
+<ParamField path="regionThreshold" type="RegionThreshold" default="any">
+  Multi-region alerting threshold
+  
+  - `"any"`: Fire if any region fails (default)
+  - `"majority"`: Fire if >50% of regions fail
+  - `"all"`: Fire only if all regions fail
+  - `number`: Fire if N or more regions fail
+</ParamField>
+
+<ParamField path="escalateAfterMs" type="number">
+  Re-notify interval in milliseconds
+  
+  If alert stays firing for this duration, send another notification.
+  
+  **Example:** `3600000` (1 hour)
+</ParamField>
+
+## Alert Conditions
+
+### AlertCondition Type
+
+```typescript
+type AlertCondition = DeclarativeCondition | ConditionCallback
+```
+
+### DeclarativeCondition
+
+Built-in condition types for common alerting scenarios:
+
+```typescript
+type DeclarativeCondition =
+  | { consecutiveFailures: number }
+  | { consecutiveSuccesses: number }
+  | { latencyAboveMs: number; forChecks?: number }
+  | { status: "down" | "degraded"; forChecks?: number }
+  | { downForMs: number }
+  | { upForMs: number }
+```
+
+#### consecutiveFailures
+
+Trigger after N consecutive failed checks:
+
+```typescript
+condition: { consecutiveFailures: 3 }
+```
+
+#### consecutiveSuccesses
+
+Trigger after N consecutive successful checks (for recovery alerts):
+
+```typescript
+condition: { consecutiveSuccesses: 2 }
+```
+
+#### latencyAboveMs
+
+Trigger when response time exceeds threshold:
+
+```typescript
+// Single slow check
+condition: { latencyAboveMs: 5000 }
+
+// Multiple slow checks
+condition: { latencyAboveMs: 2000, forChecks: 3 }
+```
+
+#### status
+
+Trigger on specific status:
+
+```typescript
+// Immediate on down
+condition: { status: "down" }
+
+// After multiple degraded checks
+condition: { status: "degraded", forChecks: 5 }
+```
+
+#### downForMs
+
+Trigger if down for duration:
+
+```typescript
+condition: { downForMs: 300000 }  // 5 minutes
+```
+
+#### upForMs
+
+Trigger if up for duration (recovery alerts):
+
+```typescript
+condition: { upForMs: 600000 }  // 10 minutes
+```
+
+### ConditionCallback
+
+Custom condition logic with access to current result and history:
+
+```typescript
+type ConditionCallback = (
+  result: CheckResultWithId,
+  history: CheckResultWithId[],
+) => boolean
+```
+
+#### CheckResultWithId
+
+```typescript
+interface CheckResultWithId {
+  id: string;
+  monitorId: string;
+  status: "up" | "down" | "degraded" | "pending";
+  responseTimeMs: number;
+  statusCode: number | null;
+  message: string | null;
+  checkedAt: Date;
+}
+```
+
+#### Callback Examples
+
+**Average latency over last 5 checks:**
+
+```typescript
+condition: (result, history) => {
+  const recent = history.slice(-5);
+  const avg = recent.reduce((sum, r) => sum + r.responseTimeMs, 0) / recent.length;
+  return avg > 3000;
+}
+```
+
+**Flapping detection:**
+
+```typescript
+condition: (result, history) => {
+  const recent = history.slice(-10);
+  const changes = recent.filter((r, i) => 
+    i > 0 && r.status !== recent[i - 1].status
+  ).length;
+  return changes > 5;  // 5+ status changes in 10 checks
+}
+```
+
+**Error rate threshold:**
+
+```typescript
+condition: (result, history) => {
+  const recent = history.slice(-20);
+  const errors = recent.filter(r => r.status === "down").length;
+  return errors / recent.length > 0.5;  // >50% error rate
+}
+```
+
+## AlertSeverity Type
+
+```typescript
+type AlertSeverity = "critical" | "warning" | "info"
+```
+
+## RegionThreshold Type
+
+```typescript
+type RegionThreshold = "any" | "majority" | "all" | number
+```
+
+## Real Examples
+
+### Critical Downtime Alert
+
+```typescript
+alerts: [
+  {
+    id: "api-down",
+    name: "API Down",
+    condition: { consecutiveFailures: 3 },
+    channels: ["ops-team", "pagerduty"],
+    severity: "critical",
+    escalateAfterMs: 1800000,  // Re-alert after 30 min
+  }
+]
+```
+
+### High Latency Warning
+
+```typescript
+alerts: [
+  {
+    id: "slow-api",
+    name: "API Slow Response",
+    condition: { latencyAboveMs: 2000, forChecks: 5 },
+    channels: ["ops-team"],
+    severity: "warning",
+  }
+]
+```
+
+### Degraded State Alert
+
+```typescript
+alerts: [
+  {
+    id: "degraded",
+    name: "Service Degraded",
+    condition: { status: "degraded", forChecks: 3 },
+    channels: ["ops-team"],
+    severity: "warning",
+    regionThreshold: "majority",
+  }
+]
+```
+
+### Recovery Alert
+
+```typescript
+alerts: [
+  {
+    id: "recovered",
+    name: "Service Recovered",
+    condition: { consecutiveSuccesses: 2 },
+    channels: ["ops-team"],
+    severity: "info",
+  }
+]
+```
+
+### Custom Condition Alert
+
+```typescript
+alerts: [
+  {
+    id: "spike",
+    name: "Latency Spike",
+    condition: (result, history) => {
+      if (history.length < 10) return false;
+      const recent = history.slice(-10);
+      const avg = recent.reduce((sum, r) => sum + r.responseTimeMs, 0) / 10;
+      return result.responseTimeMs > avg * 2;  // 2x average
+    },
+    channels: ["ops-team"],
+    severity: "warning",
+  }
+]
+```
+
+### Multi-Region Alert
+
+```typescript
+alerts: [
+  {
+    id: "regional-outage",
+    name: "Regional Outage Detected",
+    condition: { consecutiveFailures: 2 },
+    channels: ["ops-team", "engineering"],
+    severity: "critical",
+    regionThreshold: 2,  // Alert if 2+ regions fail
+  }
+]
+```
+
+## Complete Monitor with Alerts
+
+```typescript pongo/monitors/api.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Production API",
+  interval: "1m",
+  timeout: "10s",
+  
+  alerts: [
+    {
+      id: "down",
+      name: "API Down",
+      condition: { consecutiveFailures: 3 },
+      channels: ["ops-team", "pagerduty"],
+      severity: "critical",
+      escalateAfterMs: 3600000,
+    },
+    {
+      id: "slow",
+      name: "API Slow",
+      condition: { latencyAboveMs: 2000, forChecks: 5 },
+      channels: ["ops-team"],
+      severity: "warning",
+    },
+    {
+      id: "recovered",
+      name: "API Recovered",
+      condition: { consecutiveSuccesses: 2 },
+      channels: ["ops-team"],
+      severity: "info",
+    },
+  ],
+  
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com/health");
+    
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  },
+});
+```

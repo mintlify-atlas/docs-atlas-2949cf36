@@ -1,0 +1,211 @@
+---
+title: 'Webhook Payload'
+description: 'Webhook payload structure sent to notification channels'
+---
+
+## WebhookPayload
+
+Webhook payload sent to channels when alerts fire or resolve.
+
+<ResponseField name="event" type="'alert.fired' | 'alert.resolved'" required>
+  The type of alert event
+</ResponseField>
+
+<ResponseField name="alert" type="object" required>
+  Alert information object
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string" required>
+      Unique identifier for the alert
+    </ResponseField>
+    
+    <ResponseField name="name" type="string" required>
+      Display name of the alert
+    </ResponseField>
+    
+    <ResponseField name="monitorId" type="string" required>
+      ID of the monitor this alert belongs to
+    </ResponseField>
+    
+    <ResponseField name="monitorName" type="string" required>
+      Display name of the monitor
+    </ResponseField>
+    
+    <ResponseField name="severity" type="AlertSeverity" required>
+      Severity level: "critical", "warning", or "info"
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="timestamp" type="string" required>
+  ISO 8601 timestamp when the event occurred
+</ResponseField>
+
+<ResponseField name="snapshot" type="AlertSnapshot" required>
+  Snapshot of monitor state when the alert fired
+  
+  <Expandable title="properties">
+    <ResponseField name="consecutiveFailures" type="number" required>
+      Number of consecutive failures
+    </ResponseField>
+    
+    <ResponseField name="consecutiveSuccesses" type="number" required>
+      Number of consecutive successes
+    </ResponseField>
+    
+    <ResponseField name="lastStatus" type="string" required>
+      Last status of the monitor
+    </ResponseField>
+    
+    <ResponseField name="lastResponseTimeMs" type="number | null" required>
+      Last response time in milliseconds
+    </ResponseField>
+    
+    <ResponseField name="lastMessage" type="string | null" required>
+      Last message from the monitor check
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="checkResult" type="object" required>
+  The check result that triggered this event
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string" required>
+      Unique identifier for the check result
+    </ResponseField>
+    
+    <ResponseField name="status" type="string" required>
+      Status of the check: "up", "down", "degraded", or "pending"
+    </ResponseField>
+    
+    <ResponseField name="responseTimeMs" type="number" required>
+      Response time in milliseconds
+    </ResponseField>
+    
+    <ResponseField name="message" type="string | null" required>
+      Optional message from the check
+    </ResponseField>
+    
+    <ResponseField name="checkedAt" type="string" required>
+      ISO 8601 timestamp when the check was performed
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="region" type="string">
+  Region where the check was performed (for multi-region setups)
+</ResponseField>
+
+<ResponseField name="firingRegions" type="string[]">
+  Array of regions where the alert is currently firing
+</ResponseField>
+
+<ResponseField name="healthyRegions" type="string[]">
+  Array of regions where the monitor is healthy
+</ResponseField>
+
+## Type Definition
+
+```typescript
+export interface WebhookPayload {
+  event: "alert.fired" | "alert.resolved";
+  alert: {
+    id: string;
+    name: string;
+    monitorId: string;
+    monitorName: string;
+    severity: AlertSeverity;
+  };
+  timestamp: string;
+  snapshot: AlertSnapshot;
+  checkResult: {
+    id: string;
+    status: string;
+    responseTimeMs: number;
+    message: string | null;
+    checkedAt: string;
+  };
+  region?: string;
+  firingRegions?: string[];
+  healthyRegions?: string[];
+}
+```
+
+## Event Types
+
+### alert.fired
+
+Sent when an alert condition is met and the alert starts firing.
+
+### alert.resolved
+
+Sent when an alert condition is no longer met and the alert is resolved.
+
+## Example Payloads
+
+### Alert Fired
+
+```json
+{
+  "event": "alert.fired",
+  "alert": {
+    "id": "high-latency",
+    "name": "High Latency Alert",
+    "monitorId": "api-health",
+    "monitorName": "API Health Check",
+    "severity": "warning"
+  },
+  "timestamp": "2026-03-04T12:34:56.789Z",
+  "snapshot": {
+    "consecutiveFailures": 3,
+    "consecutiveSuccesses": 0,
+    "lastStatus": "degraded",
+    "lastResponseTimeMs": 1250,
+    "lastMessage": "Response time exceeds threshold"
+  },
+  "checkResult": {
+    "id": "check_abc123",
+    "status": "degraded",
+    "responseTimeMs": 1250,
+    "message": "Response time exceeds threshold",
+    "checkedAt": "2026-03-04T12:34:56.789Z"
+  },
+  "region": "us-east-1",
+  "firingRegions": ["us-east-1", "eu-west-1"],
+  "healthyRegions": ["ap-southeast-1"]
+}
+```
+
+### Alert Resolved
+
+```json
+{
+  "event": "alert.resolved",
+  "alert": {
+    "id": "high-latency",
+    "name": "High Latency Alert",
+    "monitorId": "api-health",
+    "monitorName": "API Health Check",
+    "severity": "warning"
+  },
+  "timestamp": "2026-03-04T12:45:30.123Z",
+  "snapshot": {
+    "consecutiveFailures": 0,
+    "consecutiveSuccesses": 2,
+    "lastStatus": "up",
+    "lastResponseTimeMs": 450,
+    "lastMessage": null
+  },
+  "checkResult": {
+    "id": "check_xyz789",
+    "status": "up",
+    "responseTimeMs": 450,
+    "message": null,
+    "checkedAt": "2026-03-04T12:45:30.123Z"
+  },
+  "region": "us-east-1",
+  "firingRegions": [],
+  "healthyRegions": ["us-east-1", "eu-west-1", "ap-southeast-1"]
+}
+```

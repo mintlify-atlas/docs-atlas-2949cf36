@@ -1,0 +1,324 @@
+---
+title: Webhook Notifications
+description: Configure webhook channels for Slack, PagerDuty, and custom integrations with automatic retry logic
+---
+
+Pongo sends alert notifications via webhooks. Configure channels once and reference them in your alert definitions.
+
+## Defining Channels
+
+<Steps>
+  <Step title="Open channels.ts">
+    Edit `pongo/channels.ts` to define your webhook endpoints:
+
+    ```typescript
+    import { channels } from "../src/lib/config-types";
+
+    export default channels({
+      slack: {
+        type: "webhook",
+        url: process.env.SLACK_WEBHOOK_URL!,
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Set environment variables">
+    Add your webhook URLs to `.env`:
+
+    ```bash
+    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXX
+    PAGERDUTY_ROUTING_KEY=your-integration-key
+    ```
+  </Step>
+
+  <Step title="Reference channels in alerts">
+    Use channel IDs in your monitor alert configurations:
+
+    ```typescript
+    alerts: [
+      {
+        id: "api-down",
+        name: "API Down",
+        condition: { consecutiveFailures: 3 },
+        channels: ["slack"],
+        severity: "critical",
+      },
+    ]
+    ```
+  </Step>
+</Steps>
+
+## Channel Configuration
+
+All channels have the same structure:
+
+```typescript
+export default channels({
+  "channel-id": {
+    type: "webhook",
+    url: "https://example.com/webhook",
+    headers?: { /* optional headers */ },
+  },
+});
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"webhook"` | Yes | Channel type (currently only webhooks supported) |
+| `url` | `string` | Yes | Webhook endpoint URL |
+| `headers` | `object` | No | Additional HTTP headers |
+
+## Webhook Payload Structure
+
+Pongo sends a standardized JSON payload to all webhook channels:
+
+```typescript
+{
+  event: "alert.fired" | "alert.resolved",
+  alert: {
+    id: string,
+    name: string,
+    monitorId: string,
+    monitorName: string,
+    severity: "critical" | "warning" | "info"
+  },
+  timestamp: string,  // ISO 8601 format
+  snapshot: {
+    consecutiveFailures: number,
+    consecutiveSuccesses: number,
+    lastStatus: string,
+    lastResponseTimeMs: number | null,
+    lastMessage: string | null
+  },
+  checkResult: {
+    id: string,
+    status: string,
+    responseTimeMs: number,
+    message: string | null,
+    checkedAt: string
+  },
+  region?: string,
+  firingRegions?: string[],
+  healthyRegions?: string[]
+}
+```
+
+### Example Payload
+
+```json
+{
+  "event": "alert.fired",
+  "alert": {
+    "id": "api-down",
+    "name": "API Down",
+    "monitorId": "api",
+    "monitorName": "Production API",
+    "severity": "critical"
+  },
+  "timestamp": "2025-12-15T10:30:00Z",
+  "snapshot": {
+    "consecutiveFailures": 3,
+    "consecutiveSuccesses": 0,
+    "lastStatus": "down",
+    "lastResponseTimeMs": 5000,
+    "lastMessage": "Connection timeout"
+  },
+  "checkResult": {
+    "id": "check-123",
+    "status": "down",
+    "responseTimeMs": 5000,
+    "message": "Connection timeout",
+    "checkedAt": "2025-12-15T10:30:00Z"
+  },
+  "region": "us-east"
+}
+```
+
+## Retry Behavior
+
+Pongo automatically retries failed webhook deliveries:
+
+- **Retry strategy**: Exponential backoff
+- **Max retries**: 3 (configurable via `SCHEDULER_MAX_RETRIES`)
+- **Base delay**: 5 seconds (configurable via `SCHEDULER_RETRY_DELAY_MS`)
+- **Retry delays**: 5s, 10s, 20s
+
+Webhooks are considered successful if they return a 2xx status code.
+
+## Slack Integration
+
+<Steps>
+  <Step title="Create Slack webhook">
+    1. Go to https://api.slack.com/apps
+    2. Click "Create New App" → "From scratch"
+    3. Enable "Incoming Webhooks"
+    4. Click "Add New Webhook to Workspace"
+    5. Copy the webhook URL
+  </Step>
+
+  <Step title="Configure channel">
+    Add the webhook URL to your channels:
+
+    ```typescript
+    export default channels({
+      slack: {
+        type: "webhook",
+        url: process.env.SLACK_WEBHOOK_URL!,
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Format messages (optional)">
+    For richer Slack formatting, consider using a middleware webhook that transforms Pongo's payload into Slack's Block Kit format.
+  </Step>
+</Steps>
+
+### Basic Slack Webhook
+
+```typescript
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  "ops-slack": {
+    type: "webhook",
+    url: process.env.OPS_SLACK_WEBHOOK!,
+  },
+  "dev-slack": {
+    type: "webhook",
+    url: process.env.DEV_SLACK_WEBHOOK!,
+  },
+});
+```
+
+## PagerDuty Integration
+
+<Steps>
+  <Step title="Create PagerDuty integration">
+    1. In PagerDuty, go to Services → Your Service
+    2. Click "Integrations" → "Add Integration"
+    3. Select "Events API v2"
+    4. Copy the integration key
+  </Step>
+
+  <Step title="Configure channel with auth">
+    ```typescript
+    export default channels({
+      pagerduty: {
+        type: "webhook",
+        url: "https://events.pagerduty.com/v2/enqueue",
+        headers: {
+          Authorization: `Token token=${process.env.PAGERDUTY_ROUTING_KEY}`,
+          "Content-Type": "application/json",
+        },
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Transform payload (optional)">
+    PagerDuty expects a specific format. Consider creating a middleware webhook to transform Pongo's payload.
+  </Step>
+</Steps>
+
+## Custom Integrations
+
+Integrate with any service that accepts webhooks:
+
+```typescript
+export default channels({
+  "custom-service": {
+    type: "webhook",
+    url: "https://api.example.com/webhooks/alerts",
+    headers: {
+      "X-API-Key": process.env.CUSTOM_API_KEY!,
+      "Content-Type": "application/json",
+    },
+  },
+});
+```
+
+## Multiple Channels
+
+Send alerts to multiple destinations:
+
+```typescript
+// pongo/channels.ts
+export default channels({
+  "ops-slack": {
+    type: "webhook",
+    url: process.env.OPS_SLACK_WEBHOOK!,
+  },
+  pagerduty: {
+    type: "webhook",
+    url: "https://events.pagerduty.com/v2/enqueue",
+    headers: {
+      Authorization: `Token token=${process.env.PAGERDUTY_KEY}`,
+    },
+  },
+  discord: {
+    type: "webhook",
+    url: process.env.DISCORD_WEBHOOK!,
+  },
+});
+```
+
+```typescript
+// pongo/monitors/critical-service.ts
+alerts: [
+  {
+    id: "critical-down",
+    name: "Critical Service Down",
+    condition: { consecutiveFailures: 2 },
+    channels: ["ops-slack", "pagerduty"],  // Multiple channels
+    severity: "critical",
+  },
+  {
+    id: "degraded",
+    name: "Service Degraded",
+    condition: { latencyAboveMs: 2000, forChecks: 5 },
+    channels: ["ops-slack"],  // Single channel
+    severity: "warning",
+  },
+]
+```
+
+## Testing Webhooks
+
+Test your webhook configuration:
+
+1. **Use webhook.site** for debugging:
+   ```typescript
+   export default channels({
+     test: {
+       type: "webhook",
+       url: "https://webhook.site/your-unique-url",
+     },
+   });
+   ```
+
+2. **Trigger a test alert** by temporarily lowering your threshold:
+   ```typescript
+   condition: { consecutiveFailures: 1 }
+   ```
+
+3. **Check scheduler logs** for delivery status:
+   ```bash
+   bun scheduler
+   # Watch for webhook delivery logs
+   ```
+
+## Environment Variables
+
+Store all webhook URLs and credentials in environment variables:
+
+```bash
+# .env
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+PAGERDUTY_ROUTING_KEY=your-key
+DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
+CUSTOM_API_KEY=your-api-key
+```
+
+Never commit credentials to version control.

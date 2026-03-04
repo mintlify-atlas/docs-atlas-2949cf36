@@ -1,0 +1,274 @@
+---
+title: Data Archival
+description: Automatically archive historical check results to S3 as Parquet files with day-based partitioning
+---
+
+## Overview
+
+The archiver service automatically moves old check results from your database to S3 storage as compressed Parquet files. This keeps your database lean while preserving historical data for long-term analysis.
+
+## How It Works
+
+1. **Scheduled Job**: Runs on a cron schedule (default: 3am daily)
+2. **Batch Processing**: Archives check results older than the retention period in configurable batches
+3. **Parquet Export**: Converts rows to columnar Parquet format for efficient storage and querying
+4. **S3 Upload**: Uploads partitioned files to S3 with day-based folder structure
+5. **Database Cleanup**: Removes successfully archived rows from the database
+
+## Partitioning Structure
+
+Check results are organized by date for efficient querying:
+
+```
+s3://your-bucket/pongo/archives/
+├── year=2025/
+│   ├── month=12/
+│   │   ├── day=01/
+│   │   │   └── pongo_check_results_[batch-id].parquet
+│   │   ├── day=02/
+│   │   │   └── pongo_check_results_[batch-id].parquet
+│   │   └── day=03/
+│   │       └── pongo_check_results_[batch-id].parquet
+```
+
+This structure enables:
+- **Partition pruning**: Query engines can skip irrelevant date ranges
+- **Cost optimization**: Only scan the data you need
+- **Easy deletion**: Remove entire date partitions when no longer needed
+
+## Archiver Service
+
+The archiver runs as a standalone process:
+
+```bash
+bun archiver
+```
+
+### Docker Integration
+
+Enable archiving in Docker deployments with:
+
+```dockerfile
+ENV ARCHIVAL_ENABLED=true
+```
+
+The entrypoint script automatically starts the archiver alongside the scheduler when `ARCHIVAL_ENABLED=true`.
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `ARCHIVAL_ENABLED` | Enable archival service | `false` |
+| `ARCHIVAL_RETENTION_DAYS` | Days to keep in database before archiving | `30` |
+| `ARCHIVAL_CRON` | Cron schedule for archival job | `0 3 * * *` (3am daily) |
+| `ARCHIVAL_BATCH_SIZE` | Rows to archive per batch | `10000` |
+| `ARCHIVAL_LOCAL_PATH` | Temporary local storage for Parquet files | `./archives` |
+| `ARCHIVER_PORT` | HTTP API port | `3002` |
+
+### S3 Configuration
+
+<Warning>
+All S3 environment variables are required for archival to work. Without S3 configuration, the archiver will fail.
+</Warning>
+
+| Variable | Description | Example |
+|---|---|---|
+| `S3_BUCKET` | S3 bucket name | `my-pongo-archives` |
+| `S3_REGION` | AWS region | `us-east-1` |
+| `S3_ACCESS_KEY_ID` | AWS access key ID | `AKIAIOSFODNN7EXAMPLE` |
+| `S3_SECRET_ACCESS_KEY` | AWS secret access key | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+| `S3_PREFIX` | S3 key prefix (optional) | `pongo/archives` |
+
+### Example Configuration
+
+```bash
+# Enable archival
+ARCHIVAL_ENABLED=true
+
+# Archive data older than 30 days
+ARCHIVAL_RETENTION_DAYS=30
+
+# Run archival at 3am UTC daily
+ARCHIVAL_CRON=0 3 * * *
+
+# Process 10,000 rows per batch
+ARCHIVAL_BATCH_SIZE=10000
+
+# Local temporary storage
+ARCHIVAL_LOCAL_PATH=./archives
+
+# S3 configuration
+S3_BUCKET=my-pongo-archives
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+S3_PREFIX=pongo/archives
+```
+
+## Archival Process
+
+### 1. Select Eligible Rows
+
+The archiver queries for check results where:
+- `checkedAt < (now - ARCHIVAL_RETENTION_DAYS)`
+- `archivedAt IS NULL` (not previously archived)
+
+### 2. Mark as Archiving
+
+Rows are immediately marked with `archivedAt = now()` to prevent duplicate archival in concurrent runs.
+
+### 3. Partition by Day
+
+Rows are grouped by the date of their `checkedAt` timestamp:
+
+```typescript
+const partitionKey = formatPartitionKey(checkedAt); // "2025-12-01"
+```
+
+### 4. Write Parquet Files
+
+Each partition is written to a local Parquet file:
+
+```
+./archives/year=2025/month=12/day=01/pongo_check_results_[batch-id].parquet
+```
+
+### 5. Upload to S3
+
+Parquet files are uploaded to S3 with the same partition structure:
+
+```
+s3://bucket/pongo/archives/year=2025/month=12/day=01/pongo_check_results_[batch-id].parquet
+```
+
+### 6. Cleanup
+
+- **Successful rows**: Deleted from the database
+- **Failed rows**: `archivedAt` is reset to `NULL` for retry on the next run
+- **Local files**: Deleted after successful S3 upload
+
+## Parquet Schema
+
+Archived check results include:
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `string` | Unique check result ID |
+| `monitorId` | `string` | Monitor identifier |
+| `status` | `string` | `"up"`, `"down"`, or `"degraded"` |
+| `responseTimeMs` | `number` | Response time in milliseconds |
+| `statusCode` | `number` | HTTP status code (if applicable) |
+| `message` | `string` | Additional context or error message |
+| `checkedAt` | `timestamp` | When the check was performed |
+| `createdAt` | `timestamp` | When the record was created |
+
+## Querying Archived Data
+
+Use AWS Athena, DuckDB, or any Parquet-compatible tool:
+
+### AWS Athena Example
+
+```sql
+CREATE EXTERNAL TABLE pongo_check_results (
+  id STRING,
+  monitorId STRING,
+  status STRING,
+  responseTimeMs BIGINT,
+  statusCode INT,
+  message STRING,
+  checkedAt TIMESTAMP,
+  createdAt TIMESTAMP
+)
+PARTITIONED BY (year INT, month INT, day INT)
+STORED AS PARQUET
+LOCATION 's3://your-bucket/pongo/archives/';
+
+MSCK REPAIR TABLE pongo_check_results;
+
+SELECT monitorId, AVG(responseTimeMs) as avg_response
+FROM pongo_check_results
+WHERE year=2025 AND month=12 AND day=01
+GROUP BY monitorId;
+```
+
+### DuckDB Example
+
+```sql
+SELECT monitorId, AVG(responseTimeMs) as avg_response
+FROM read_parquet('s3://your-bucket/pongo/archives/year=2025/month=12/*/*.parquet')
+WHERE status = 'up'
+GROUP BY monitorId;
+```
+
+## Monitoring Archival
+
+The archiver exposes an HTTP API on port 3002 (configurable via `ARCHIVER_PORT`):
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Health check |
+| `/trigger` | POST | Manually trigger archival |
+
+### Manual Trigger
+
+```bash
+curl -X POST http://localhost:3002/trigger
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Tune Retention Period" icon="calendar">
+    Balance database size with query performance needs. 30 days works for most use cases.
+  </Card>
+  
+  <Card title="Monitor Batch Size" icon="layer-group">
+    Larger batches reduce overhead but increase memory usage. Start with 10,000.
+  </Card>
+  
+  <Card title="Schedule Off-Peak" icon="clock">
+    Run archival during low-traffic periods to minimize database impact.
+  </Card>
+  
+  <Card title="Set S3 Lifecycle Rules" icon="trash">
+    Configure S3 lifecycle policies to automatically delete old archives or transition to Glacier.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Archival Not Running
+
+1. Verify `ARCHIVAL_ENABLED=true`
+2. Check all S3 environment variables are set
+3. Review archiver logs for errors
+
+### Large Database Despite Archival
+
+1. Check `ARCHIVAL_RETENTION_DAYS` is appropriate
+2. Verify archival cron schedule is running
+3. Manually trigger archival to test: `curl -X POST http://localhost:3002/trigger`
+
+### S3 Upload Failures
+
+1. Verify IAM credentials have `s3:PutObject` permission
+2. Check bucket name and region are correct
+3. Ensure bucket exists and is accessible
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Deployment" icon="rocket" href="/deployment/overview">
+    Deploy the archiver service in production
+  </Card>
+  
+  <Card title="Environment Variables" icon="gear" href="/configuration/environment-variables">
+    Complete list of configuration options
+  </Card>
+  
+  <Card title="Database" icon="database" href="/core-concepts/database">
+    Learn about database schema and management
+  </Card>
+</CardGroup>

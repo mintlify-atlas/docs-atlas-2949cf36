@@ -1,0 +1,239 @@
+---
+title: Setting Up Dashboards
+description: Create dashboards to group monitors, track SLAs, and publish public status pages
+---
+
+Dashboards group related monitors together and provide a unified view of your service health. They can be kept private or published as public status pages.
+
+## Creating a Dashboard
+
+<Steps>
+  <Step title="Create the dashboard file">
+    Create a new TypeScript file in `pongo/dashboards/`, for example `production.ts`:
+
+    ```typescript
+    import type { DashboardConfig } from "@/lib/config-types";
+
+    export default {
+      name: "Production",
+      slug: "production",
+      public: true,
+      slaTarget: 99.9,
+      monitors: ["api", "database", "cdn"],
+    } satisfies DashboardConfig;
+    ```
+  </Step>
+
+  <Step title="Register the dashboard">
+    Add your dashboard to `pongo/dashboards/index.ts`:
+
+    ```typescript
+    import production from "./production";
+    import staging from "./staging";
+
+    export default {
+      production,
+      staging,
+    };
+    ```
+  </Step>
+
+  <Step title="View the dashboard">
+    Access your dashboard at:
+    - Private: `/dashboards/production`
+    - Public: `/shared/production`
+  </Step>
+</Steps>
+
+## Dashboard Configuration
+
+### Required Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Display name for the dashboard |
+| `slug` | `string` | URL-friendly identifier |
+| `monitors` | `string[]` | Array of monitor IDs to include |
+
+### Optional Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `public` | `boolean` | Whether the dashboard is publicly accessible (default: `false`) |
+| `slaTarget` | `number` | Target uptime percentage (e.g., `99.9` for 99.9%) |
+
+## Adding Monitors
+
+The `monitors` array references monitor IDs defined in your `pongo/monitors/` files. Monitor IDs are derived from the export key in `pongo/monitors/index.ts`:
+
+```typescript
+// pongo/monitors/index.ts
+import api from "./api";
+import database from "./database";
+import cdn from "./cdn";
+
+export default {
+  api,        // Monitor ID: "api"
+  database,   // Monitor ID: "database"
+  cdn,        // Monitor ID: "cdn"
+};
+```
+
+```typescript
+// pongo/dashboards/production.ts
+export default {
+  name: "Production",
+  slug: "production",
+  monitors: ["api", "database", "cdn"],
+  slaTarget: 99.9,
+} satisfies DashboardConfig;
+```
+
+## Setting SLA Targets
+
+The `slaTarget` field sets your uptime goal. Pongo tracks actual uptime and displays:
+
+- Current uptime percentage
+- SLA target comparison
+- Visual indicator (green when meeting target, red when below)
+
+```typescript
+export default {
+  name: "Production",
+  slug: "production",
+  slaTarget: 99.9,   // 99.9% uptime target
+  monitors: ["api"],
+} satisfies DashboardConfig;
+```
+
+Common SLA targets:
+- `99.9` ("three nines") = ~43 minutes downtime/month
+- `99.95` = ~21 minutes downtime/month
+- `99.99` ("four nines") = ~4 minutes downtime/month
+
+## Making Dashboards Public
+
+Public dashboards create status pages accessible without authentication:
+
+```typescript
+export default {
+  name: "Status",
+  slug: "status",
+  public: true,          // Enable public access
+  monitors: ["api", "cdn"],
+  slaTarget: 99.9,
+} satisfies DashboardConfig;
+```
+
+Public dashboards include:
+- Real-time monitor status
+- Response time charts
+- Uptime bars (90-day history)
+- Latency percentiles (P50, P95, P99)
+- Status distribution
+- Incident timeline
+- Announcements
+- RSS/Atom feeds
+
+### Public Dashboard Routes
+
+| Route | Description |
+|-------|-------------|
+| `/shared/[slug]` | Public status page |
+| `/shared/[slug]/feed.xml` | RSS feed |
+| `/shared/[slug]/feed.atom` | Atom feed |
+
+## Complete Examples
+
+### Production Dashboard
+
+```typescript
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Production",
+  slug: "production",
+  public: true,
+  slaTarget: 99.95,
+  monitors: [
+    "api",
+    "database",
+    "cdn",
+    "payment-gateway",
+    "auth-service",
+  ],
+} satisfies DashboardConfig;
+```
+
+### Internal Dashboard
+
+```typescript
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Internal Services",
+  slug: "internal",
+  public: false,         // Private dashboard
+  slaTarget: 99.5,
+  monitors: [
+    "internal-api",
+    "admin-portal",
+    "background-jobs",
+  ],
+} satisfies DashboardConfig;
+```
+
+### Third-Party Status Dashboard
+
+```typescript
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Dependencies",
+  slug: "dependencies",
+  public: true,
+  monitors: [
+    "vercel",
+    "cloudflare",
+    "aws",
+    "stripe",
+  ],
+} satisfies DashboardConfig;
+```
+
+## Dashboard Features
+
+All dashboards display:
+
+### Monitor List
+- Current status (up, down, degraded)
+- Latest response time
+- Last checked timestamp
+- Quick links to monitor details
+
+### Charts and Metrics
+- Response time over time
+- Uptime percentage
+- Error rate
+- Latency percentiles
+
+### Status History
+- 90-day uptime bars
+- Daily status distribution
+- Incident correlation
+
+### Incidents and Announcements
+- Active incidents with severity
+- Incident timeline with updates
+- Scheduled maintenance notifications
+- General announcements
+
+## Dashboard Navigation
+
+Access dashboards through:
+
+- **Dashboard List**: `/` - Overview of all dashboards
+- **Private Dashboard**: `/dashboards/[id]` - Requires authentication
+- **Public Status Page**: `/shared/[slug]` - No authentication required
+- **Monitor List**: `/monitors` - All monitors with filtering
+- **Alert History**: `/alerts` - Alert management and history

@@ -1,0 +1,390 @@
+---
+title: Alerts
+description: Define alert conditions and notifications for monitor failures
+---
+
+Alerts automatically notify you when monitors detect issues. They evaluate conditions against check results, fire webhooks to channels, and auto-resolve when conditions clear.
+
+## What are Alerts?
+
+Alerts are declarative or programmatic rules attached to monitors that:
+
+- Evaluate conditions after each check
+- Fire notifications to configured channels
+- Track firing state across regions
+- Auto-resolve when conditions clear
+- Support flap detection to prevent notification storms
+- Allow manual silencing from the dashboard
+
+## AlertConfig Interface
+
+Alerts are defined inline within monitor configurations:
+
+```typescript
+export interface AlertConfig {
+  id: string;
+  name: string;
+  condition: AlertCondition;
+  channels: string[];
+  severity?: AlertSeverity;
+  regionThreshold?: RegionThreshold;
+  /** Re-notify if alert stays firing for this many ms */
+  escalateAfterMs?: number;
+}
+```
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the alert within the monitor
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name for the alert in notifications and UI
+</ParamField>
+
+<ParamField path="condition" type="AlertCondition" required>
+  Declarative condition object or callback function that determines when to fire
+</ParamField>
+
+<ParamField path="channels" type="string[]" required>
+  Array of channel IDs to notify when the alert fires. Must match keys in `pongo/channels.ts`.
+</ParamField>
+
+<ParamField path="severity" type="'critical' | 'warning' | 'info'" default="warning">
+  Alert severity level affecting notification priority and dashboard display
+</ParamField>
+
+<ParamField path="regionThreshold" type="'any' | 'majority' | 'all' | number" default="any">
+  Multi-region threshold: `"any"` fires if any region triggers, `"majority"` requires >50%, `"all"` requires all regions, or a number for exact count
+</ParamField>
+
+<ParamField path="escalateAfterMs" type="number">
+  Re-notify if alert stays firing for this duration (milliseconds)
+</ParamField>
+
+## Alert Conditions
+
+Alerts support two types of conditions: declarative and callback-based.
+
+### Declarative Conditions
+
+Use built-in condition objects for common scenarios:
+
+```typescript
+export type DeclarativeCondition =
+  | { consecutiveFailures: number }
+  | { consecutiveSuccesses: number }
+  | { latencyAboveMs: number; forChecks?: number }
+  | { status: "down" | "degraded"; forChecks?: number }
+  | { downForMs: number }
+  | { upForMs: number };
+```
+
+#### Consecutive Failures
+
+```typescript
+{ consecutiveFailures: 3 }
+```
+
+Fires when the monitor fails 3 times in a row.
+
+#### Consecutive Successes
+
+```typescript
+{ consecutiveSuccesses: 2 }
+```
+
+Fires when the monitor succeeds twice consecutively (useful for recovery alerts).
+
+#### Latency Threshold
+
+```typescript
+{ latencyAboveMs: 1000, forChecks: 5 }
+```
+
+Fires when response time exceeds 1000ms for 5 consecutive checks. `forChecks` defaults to 1.
+
+#### Status Match
+
+```typescript
+{ status: "down", forChecks: 3 }
+```
+
+Fires when status is "down" for 3 consecutive checks.
+
+#### Duration Thresholds
+
+```typescript
+{ downForMs: 60000 }  // down for 1 minute
+{ upForMs: 30000 }    // up for 30 seconds
+```
+
+Fires when the monitor stays in a given state for the specified duration.
+
+### Callback Conditions
+
+For complex logic, use a callback function with full access to check history:
+
+```typescript
+export type ConditionCallback = (
+  result: CheckResultWithId,
+  history: CheckResultWithId[],
+) => boolean;
+```
+
+The callback receives the latest check result and an array of recent history:
+
+```typescript
+condition: (result, history) => {
+  // Fire if 3 out of last 5 checks failed
+  const recentChecks = history.slice(-5);
+  const failures = recentChecks.filter(r => r.status === "down");
+  return failures.length >= 3;
+}
+```
+
+<Note>
+  Callback conditions have access to the full `CheckResultWithId` object including `id`, `monitorId`, `status`, `responseTimeMs`, `statusCode`, `message`, and `checkedAt`.
+</Note>
+
+## Severity Levels
+
+```typescript
+export type AlertSeverity = "critical" | "warning" | "info";
+```
+
+<Tabs>
+  <Tab title="Critical">
+    Use for production outages and urgent issues requiring immediate attention.
+    
+    ```typescript
+    severity: "critical"
+    ```
+  </Tab>
+  <Tab title="Warning">
+    Use for degraded performance or non-critical issues. This is the default.
+    
+    ```typescript
+    severity: "warning"
+    ```
+  </Tab>
+  <Tab title="Info">
+    Use for informational alerts like recovery notifications.
+    
+    ```typescript
+    severity: "info"
+    ```
+  </Tab>
+</Tabs>
+
+## Region Thresholds
+
+For multi-region deployments, control when alerts fire across regions:
+
+```typescript
+export type RegionThreshold = "any" | "majority" | "all" | number;
+```
+
+<ParamField path="any" type="string">
+  **Default.** Fire if any single region triggers the condition.
+</ParamField>
+
+<ParamField path="majority" type="string">
+  Fire only if >50% of regions trigger the condition.
+</ParamField>
+
+<ParamField path="all" type="string">
+  Fire only if all regions trigger the condition.
+</ParamField>
+
+<ParamField path="number" type="number">
+  Fire if N or more regions trigger the condition.
+</ParamField>
+
+```typescript
+regionThreshold: "any"        // fire on first region failure
+regionThreshold: "majority"   // fire if >50% regions fail
+regionThreshold: "all"        // fire only if all regions fail
+regionThreshold: 2            // fire if 2+ regions fail
+```
+
+## Flap Detection
+
+Pongo automatically detects flapping (rapid state changes) and suppresses notifications:
+
+- If an alert toggles between firing and resolved 3+ times in 10 minutes, notifications are suppressed
+- The dashboard shows the alert as "flapping"
+- Notifications resume once the state stabilizes
+
+<Note>
+  Flap detection prevents notification storms from intermittent issues while still tracking the instability.
+</Note>
+
+## Webhook Payload
+
+When alerts fire or resolve, Pongo sends a webhook to all configured channels:
+
+```typescript
+export interface WebhookPayload {
+  event: "alert.fired" | "alert.resolved";
+  alert: {
+    id: string;
+    name: string;
+    monitorId: string;
+    monitorName: string;
+    severity: AlertSeverity;
+  };
+  timestamp: string;
+  snapshot: AlertSnapshot;
+  checkResult: {
+    id: string;
+    status: string;
+    responseTimeMs: number;
+    message: string | null;
+    checkedAt: string;
+  };
+  region?: string;
+  firingRegions?: string[];
+  healthyRegions?: string[];
+}
+```
+
+### Snapshot Details
+
+```typescript
+export interface AlertSnapshot {
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+  lastStatus: string;
+  lastResponseTimeMs: number | null;
+  lastMessage: string | null;
+}
+```
+
+## Examples
+
+### Basic Alert with Consecutive Failures
+
+```typescript
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "API Health",
+  interval: "1m",
+  
+  alerts: [
+    {
+      id: "api-down",
+      name: "API Down",
+      condition: { consecutiveFailures: 3 },
+      channels: ["slack"],
+      severity: "critical",
+    },
+  ],
+  
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com/health");
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  },
+});
+```
+
+### Latency Alert with Escalation
+
+```typescript
+alerts: [
+  {
+    id: "high-latency",
+    name: "High Latency Detected",
+    condition: { latencyAboveMs: 2000, forChecks: 5 },
+    channels: ["slack", "pagerduty"],
+    severity: "warning",
+    escalateAfterMs: 300_000, // re-notify after 5 minutes
+  },
+]
+```
+
+### Multi-region Alert
+
+```typescript
+alerts: [
+  {
+    id: "multi-region-outage",
+    name: "Multi-Region Outage",
+    condition: { consecutiveFailures: 2 },
+    channels: ["pagerduty"],
+    severity: "critical",
+    regionThreshold: "majority", // only fire if >50% regions fail
+  },
+]
+```
+
+### Callback-based Alert
+
+```typescript
+alerts: [
+  {
+    id: "custom-logic",
+    name: "Custom Failure Pattern",
+    condition: (result, history) => {
+      // Fire if 3 out of last 5 checks failed
+      const recent = history.slice(-5);
+      const failures = recent.filter(r => r.status === "down");
+      return failures.length >= 3;
+    },
+    channels: ["slack"],
+    severity: "warning",
+  },
+]
+```
+
+### Recovery Alert
+
+```typescript
+alerts: [
+  {
+    id: "service-recovered",
+    name: "Service Recovered",
+    condition: { consecutiveSuccesses: 3 },
+    channels: ["slack"],
+    severity: "info",
+  },
+]
+```
+
+## Alert Lifecycle
+
+1. **Evaluation**: After each check, all alert conditions are evaluated
+2. **Firing**: If condition is met and not flapping, webhook is sent to all channels
+3. **Flap Detection**: If alert toggles rapidly, notifications are suppressed
+4. **Escalation**: If configured, re-notify after `escalateAfterMs` if still firing
+5. **Resolution**: When condition clears, send resolved webhook
+
+## Silencing Alerts
+
+Alerts can be temporarily silenced from the dashboard UI or programmatically:
+
+```typescript
+// Silence until specific time
+silenceAlert(alertId, new Date("2025-12-31T23:59:59Z"));
+
+// Unsilence immediately
+unsilenceAlert(alertId);
+```
+
+Silenced alerts still evaluate conditions but don't send notifications.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Channels" icon="webhook" href="/concepts/channels">
+    Configure webhook destinations
+  </Card>
+  <Card title="Monitors" icon="activity" href="/concepts/monitors">
+    Back to monitor configuration
+  </Card>
+</CardGroup>

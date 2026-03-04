@@ -1,0 +1,187 @@
+---
+title: Deploy to Vercel
+description: Deploy Pongo to Vercel with serverless scheduling using Vercel Cron
+---
+
+Deploy Pongo to Vercel for serverless hosting with automatic scaling and global CDN delivery.
+
+## Quick Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/TimMikeladze/pongo&env=DATABASE_URL,CRON_SECRET&project-name=pongo&repository-name=pongo)
+
+Click the button above to deploy Pongo to Vercel in one click.
+
+## Manual Deployment
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/TimMikeladze/pongo.git
+    cd pongo
+    ```
+  </Step>
+
+  <Step title="Install Vercel CLI">
+    ```bash
+    npm i -g vercel
+    ```
+  </Step>
+
+  <Step title="Deploy to Vercel">
+    ```bash
+    vercel
+    ```
+    
+    Follow the prompts to link your project.
+  </Step>
+
+  <Step title="Configure environment variables">
+    Set the required environment variables in your Vercel project settings:
+
+    ```bash
+    vercel env add DATABASE_URL
+    vercel env add CRON_SECRET
+    vercel env add ACCESS_CODE  # Optional: password-protect dashboard
+    ```
+
+    Or use the Vercel dashboard: **Settings → Environment Variables**
+  </Step>
+
+  <Step title="Deploy to production">
+    ```bash
+    vercel --prod
+    ```
+  </Step>
+</Steps>
+
+## Environment Variables
+
+### Required
+
+| Variable | Description | Example |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://user:pass@host:5432/pongo` |
+| `CRON_SECRET` | Secret token for authenticating cron requests | Generate with `openssl rand -base64 32` |
+
+### Optional
+
+| Variable | Description | Default |
+|---|---|---|
+| `ACCESS_CODE` | Password to protect dashboard | - (no auth) |
+| `EXPIRY_DAYS` | Session TTL in days | `7` |
+| `NEXT_PUBLIC_URL` | Public URL for SEO/metadata | Auto-detected |
+
+<Warning>
+  **Important**: Vercel requires PostgreSQL. SQLite is not supported in serverless environments.
+</Warning>
+
+## Vercel Cron Setup
+
+Pongo includes a `vercel.json` configuration that automatically sets up Vercel Cron:
+
+```json vercel.json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "*/30 * * * *"
+    }
+  ]
+}
+```
+
+This configuration:
+- Triggers the `/api/cron` endpoint every 30 seconds
+- Executes all monitors on their configured schedules
+- Requires the `CRON_SECRET` environment variable for authentication
+
+### Adjusting Cron Schedule
+
+Modify the `schedule` field in `vercel.json` to change the execution frequency:
+
+```json
+"schedule": "*/1 * * * *"  // Every 1 minute
+"schedule": "*/5 * * * *"  // Every 5 minutes
+```
+
+<Note>
+  Vercel Cron has a minimum interval of 1 minute on Hobby plans and 10 seconds on Pro plans.
+</Note>
+
+## Cron Endpoint
+
+The `/api/cron` endpoint is protected by the `CRON_SECRET` environment variable:
+
+```typescript
+// Endpoint: /api/cron
+// Method: GET or POST
+// Headers: Authorization: Bearer <CRON_SECRET>
+```
+
+Vercel Cron automatically includes the correct authorization header when triggering the endpoint.
+
+### Manual Trigger
+
+You can manually trigger a check run:
+
+```bash
+curl -X POST https://your-app.vercel.app/api/cron \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+## Database Setup
+
+### PostgreSQL Options
+
+**Vercel Postgres:**
+```bash
+vercel postgres create
+```
+
+**External Providers:**
+- [Neon](https://neon.tech) (recommended)
+- [Supabase](https://supabase.com)
+- [Railway](https://railway.app)
+- [PlanetScale](https://planetscale.com)
+
+Once created, add the connection string to your Vercel project:
+
+```bash
+vercel env add DATABASE_URL
+# Paste: postgres://user:pass@host:5432/pongo
+```
+
+## Troubleshooting
+
+### Monitors not running
+
+1. Verify `CRON_SECRET` is set correctly in environment variables
+2. Check Vercel Cron logs: **Deployments → Logs → Cron**
+3. Test the endpoint manually with curl
+
+### Database connection errors
+
+1. Verify `DATABASE_URL` format: `postgres://user:pass@host:5432/dbname`
+2. Ensure database allows connections from Vercel IPs
+3. Check database is accessible and credentials are correct
+
+### Cold starts affecting monitors
+
+Serverless functions may experience cold starts. Consider:
+- Using a hybrid deployment (Vercel for dashboard, VPS for scheduler)
+- Upgrading to Vercel Pro for improved cold start times
+- Adjusting alert conditions to account for occasional delays
+
+## Hybrid Deployment
+
+For more reliable scheduling, deploy the dashboard to Vercel but run the scheduler on a VPS:
+
+1. Deploy to Vercel as described above
+2. On your VPS, run:
+   ```bash
+   DATABASE_URL="postgres://..." bun scheduler
+   ```
+3. Remove the `crons` section from `vercel.json`
+
+This gives you Vercel's global CDN for the dashboard with fine-grained control over monitor execution.

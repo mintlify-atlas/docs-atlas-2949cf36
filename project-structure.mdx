@@ -1,0 +1,488 @@
+---
+title: Project Structure
+description: Understanding Pongo's directory layout and file organization
+---
+
+Pongo separates your **configuration** (what you customize) from the **application code** (the platform itself). This guide explains how to organize your monitoring setup.
+
+## Directory Overview
+
+```
+pongo/                   # Your configuration (version-controlled)
+├── monitors/            # Monitor definitions (*.ts)
+│   ├── api.ts
+│   ├── database.ts
+│   ├── cdn.ts
+│   └── index.ts        # Register all monitors
+├── dashboards/          # Dashboard configs (*.ts)
+│   ├── production.ts
+│   ├── staging.ts
+│   └── index.ts        # Register all dashboards
+├── channels.ts          # Webhook notification channels
+├── announcements/       # Status announcements (*.md)
+│   ├── maintenance.md
+│   └── new-features.md
+└── incidents/           # Incident reports (*.md)
+    ├── outage-2024.md
+    └── degradation.md
+
+src/                     # Application code (don't modify unless contributing)
+├── app/                 # Next.js App Router
+│   ├── page.tsx        # Homepage
+│   ├── monitors/       # Monitor pages
+│   ├── dashboards/     # Dashboard pages
+│   ├── alerts/         # Alert management
+│   ├── shared/         # Public status pages
+│   └── api/            # API routes
+├── scheduler/           # Standalone monitor runner
+│   ├── index.ts        # Entry point
+│   ├── engine.ts       # Execution engine
+│   └── alert.ts        # Alert evaluation
+├── archiver/            # S3 data archival service
+├── components/          # React UI (Radix UI + Tailwind)
+├── db/                  # Drizzle ORM schema
+│   ├── schema.ts       # Database tables
+│   └── index.ts        # Database client
+├── lib/                 # Core business logic
+│   ├── config-types.ts # Type definitions for monitors/dashboards
+│   ├── loader.ts       # Load configs from filesystem
+│   ├── data.ts         # Data queries
+│   └── types.ts        # Shared types
+└── proxy.ts             # iron-session auth middleware
+```
+
+## The `pongo/` Configuration Directory
+
+This is where **you** define your monitoring setup. Everything in this directory is version-controlled and deployed with your application.
+
+### Monitors (`pongo/monitors/`)
+
+Each TypeScript file exports a monitor configuration using the `monitor()` function.
+
+**Example structure:**
+
+```
+pongo/monitors/
+├── api.ts              # API health check
+├── database.ts         # Database connectivity
+├── cdn.ts              # CDN performance
+├── external-services.ts # Third-party dependencies
+└── index.ts            # Export all monitors
+```
+
+**Basic monitor file:**
+
+```typescript pongo/monitors/api.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "API Health",
+  interval: "5m",
+  timeout: "30s",
+
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com/health");
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  },
+});
+```
+
+**Register in `index.ts`:**
+
+```typescript pongo/monitors/index.ts
+import api from "./api";
+import database from "./database";
+import cdn from "./cdn";
+
+export default {
+  api,
+  database,
+  cdn,
+};
+```
+
+<Note>
+  The **key** you use when exporting (e.g., `api`, `database`) becomes the monitor ID referenced in dashboards and alerts.
+</Note>
+
+### Dashboards (`pongo/dashboards/`)
+
+Dashboards group monitors and can be made public for status pages.
+
+**Example structure:**
+
+```
+pongo/dashboards/
+├── production.ts       # Production services
+├── staging.ts          # Staging environment
+├── external.ts         # External dependencies
+└── index.ts            # Export all dashboards
+```
+
+**Dashboard file:**
+
+```typescript pongo/dashboards/production.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Production",
+  slug: "production",
+  public: true,
+  slaTarget: 99.9,
+  monitors: ["api", "database", "cdn"],
+} satisfies DashboardConfig;
+```
+
+**Register in `index.ts`:**
+
+```typescript pongo/dashboards/index.ts
+import production from "./production";
+import staging from "./staging";
+
+export default {
+  production,
+  staging,
+};
+```
+
+<Info>
+  Public dashboards are accessible at `/shared/[slug]` without authentication. Private dashboards are at `/dashboards/[id]` and require login if `ACCESS_CODE` is set.
+</Info>
+
+### Channels (`pongo/channels.ts`)
+
+Define webhook endpoints for alert notifications.
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  slack: {
+    type: "webhook",
+    url: process.env.SLACK_WEBHOOK_URL!,
+  },
+  pagerduty: {
+    type: "webhook",
+    url: "https://events.pagerduty.com/v2/enqueue",
+    headers: {
+      Authorization: `Token token=${process.env.PAGERDUTY_TOKEN}`,
+    },
+  },
+  discord: {
+    type: "webhook",
+    url: process.env.DISCORD_WEBHOOK_URL!,
+  },
+});
+```
+
+<Warning>
+  Store webhook URLs in environment variables, not directly in code. Add them to `.env` and reference them via `process.env`.
+</Warning>
+
+### Announcements (`pongo/announcements/`)
+
+Markdown files with frontmatter for scheduled maintenance, feature launches, or general updates.
+
+**File structure:**
+
+```
+pongo/announcements/
+├── scheduled-maintenance.md
+├── new-features.md
+└── performance-improvements.md
+```
+
+**Example file:**
+
+```markdown pongo/announcements/scheduled-maintenance.md
+---
+dashboard: production
+title: Scheduled Maintenance
+type: maintenance
+createdAt: "2026-03-10T00:00:00Z"
+expiresAt: "2026-03-11T06:00:00Z"
+---
+
+We will be performing database maintenance on **March 10th, 2026** from 2:00 AM to 4:00 AM UTC.
+
+During this window, you may experience brief interruptions to API requests. No action is required on your part.
+```
+
+**Frontmatter fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dashboard` | string | Dashboard slug this announcement belongs to |
+| `title` | string | Announcement title |
+| `type` | `"info"` \| `"maintenance"` \| `"update"` | Type badge shown in UI |
+| `createdAt` | ISO 8601 date | When the announcement was created |
+| `expiresAt` | ISO 8601 date (optional) | When to automatically hide |
+
+<Tip>
+  Announcements are sorted by `createdAt` (newest first) and automatically hidden after `expiresAt`.
+</Tip>
+
+### Incidents (`pongo/incidents/`)
+
+Markdown files with frontmatter for incident reports and postmortems.
+
+**File structure:**
+
+```
+pongo/incidents/
+├── payment-gateway-outage.md
+├── cdn-degradation.md
+└── database-connectivity-issues.md
+```
+
+**Example file:**
+
+```markdown pongo/incidents/payment-gateway-outage.md
+---
+dashboard: production
+title: Payment Gateway Outage
+severity: critical
+status: resolved
+affectedMonitors:
+  - payment-api
+  - checkout
+createdAt: "2026-02-10T06:00:00Z"
+resolvedAt: "2026-02-10T09:45:00Z"
+---
+
+## Investigating - Feb 10, 06:00 UTC
+
+Payment gateway is completely unreachable. All payment requests are timing out.
+
+## Identified - Feb 10, 07:15 UTC
+
+The issue has been identified as a network partition between our datacenter and the payment provider.
+
+## Monitoring - Feb 10, 08:30 UTC
+
+Network connectivity restored. Payment gateway is coming back online.
+
+## Resolved - Feb 10, 09:45 UTC
+
+Payment gateway is fully operational. All pending transactions have been processed.
+
+## Root Cause
+
+Upstream network provider experienced a routing issue that affected connectivity to the payment gateway. Issue was resolved by the provider.
+```
+
+**Frontmatter fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dashboard` | string | Dashboard slug this incident belongs to |
+| `title` | string | Incident title |
+| `severity` | `"critical"` \| `"warning"` \| `"info"` | Severity level |
+| `status` | `"investigating"` \| `"identified"` \| `"monitoring"` \| `"resolved"` | Current status |
+| `affectedMonitors` | string[] (optional) | List of affected monitor IDs |
+| `createdAt` | ISO 8601 date | When the incident started |
+| `resolvedAt` | ISO 8601 date (optional) | When the incident was resolved |
+
+<Info>
+  Use Markdown headings with timestamps to create an incident timeline. This provides a chronological view of events.
+</Info>
+
+## The `src/` Application Directory
+
+This contains the Pongo platform code. **You typically don't need to modify these files** unless you're contributing to the project.
+
+### Key Subdirectories
+
+**`src/app/`** - Next.js pages and API routes
+- Uses the App Router (React Server Components)
+- Authentication via `iron-session` middleware
+- Public routes: `/`, `/shared/*`, `/login`, `/api/*`
+- Protected routes: `/monitors`, `/dashboards`, `/alerts`, `/settings`
+
+**`src/scheduler/`** - Monitor execution engine
+- Standalone Bun process
+- Loads monitors from `pongo/monitors/`
+- Executes handlers on schedule
+- Evaluates alert conditions
+- Dispatches webhooks with retry logic
+- HTTP API (port 3001) for manual triggers
+
+**`src/archiver/`** - Data archival service
+- Archives old check results to S3 or local storage
+- Converts to Parquet format
+- Day-based partitioning (`year=YYYY/month=MM/day=DD/`)
+- Configurable retention and batch size
+
+**`src/components/`** - React UI components
+- Built with Radix UI primitives
+- Styled with Tailwind CSS
+- Charts with Recharts
+- Reusable across pages
+
+**`src/db/`** - Database layer
+- Drizzle ORM schema definitions
+- Auto-detects SQLite or PostgreSQL from connection string
+- Migrations in `drizzle/` directory
+
+**`src/lib/`** - Core utilities
+- `config-types.ts` - Type definitions for `monitor()`, `channels()`, etc.
+- `loader.ts` - Loads configs from `pongo/` directory
+- `data.ts` - Database queries for checks, alerts, monitors
+- `types.ts` - Shared TypeScript types
+
+## File Organization Best Practices
+
+### Organizing Monitors
+
+Group monitors logically:
+
+```
+pongo/monitors/
+├── internal/
+│   ├── api.ts
+│   ├── database.ts
+│   └── index.ts
+├── external/
+│   ├── stripe.ts
+│   ├── sendgrid.ts
+│   └── index.ts
+└── index.ts            # Import from subdirectories
+```
+
+**Root `index.ts`:**
+
+```typescript pongo/monitors/index.ts
+import internal from "./internal";
+import external from "./external";
+
+export default {
+  ...internal,
+  ...external,
+};
+```
+
+### Environment-Specific Configs
+
+Use environment variables to switch behavior:
+
+```typescript pongo/monitors/api.ts
+export default monitor({
+  name: "API",
+  interval: process.env.NODE_ENV === "production" ? "1m" : "5m",
+  
+  async handler() {
+    const url = process.env.API_URL || "https://api.example.com";
+    const res = await fetch(url);
+    // ...
+  },
+});
+```
+
+### Shared Monitor Logic
+
+Extract common patterns:
+
+```typescript pongo/monitors/_helpers.ts
+export function httpCheck(url: string) {
+  return async () => {
+    const start = Date.now();
+    const res = await fetch(url);
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  };
+}
+```
+
+```typescript pongo/monitors/api.ts
+import { monitor } from "../../src/lib/config-types";
+import { httpCheck } from "./_helpers";
+
+export default monitor({
+  name: "API",
+  interval: "5m",
+  handler: httpCheck("https://api.example.com"),
+});
+```
+
+### Incident Templates
+
+Create templates for common incidents:
+
+```markdown pongo/incidents/_template.md
+---
+dashboard: 
+title: 
+severity: 
+status: investigating
+affectedMonitors: []
+createdAt: 
+resolvedAt: 
+---
+
+## Investigating - [timestamp]
+
+[Description of the issue]
+
+## Identified - [timestamp]
+
+[Root cause identified]
+
+## Monitoring - [timestamp]
+
+[Fix applied, monitoring recovery]
+
+## Resolved - [timestamp]
+
+[Issue resolved, normal operations restored]
+
+## Root Cause
+
+[Detailed root cause analysis]
+
+## Action Items
+
+- [ ] [Follow-up task 1]
+- [ ] [Follow-up task 2]
+```
+
+## Configuration Loading
+
+Pongo loads all configuration files at runtime:
+
+1. **Monitors** - Imported from `pongo/monitors/index.ts`
+2. **Dashboards** - Imported from `pongo/dashboards/index.ts`
+3. **Channels** - Imported from `pongo/channels.ts`
+4. **Announcements** - Read from `pongo/announcements/*.md` (parsed with `gray-matter`)
+5. **Incidents** - Read from `pongo/incidents/*.md` (parsed with `gray-matter`)
+
+<Warning>
+  Changes to monitors, dashboards, or channels require restarting the scheduler. Announcements and incidents are loaded on each request and don't require a restart.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitors" icon="chart-line" href="/monitors">
+    Learn how to write effective monitor handlers
+  </Card>
+  
+  <Card title="Alerts" icon="bell" href="/alerts">
+    Configure alerts with conditions and channels
+  </Card>
+  
+  <Card title="Dashboards" icon="layout-dashboard" href="/dashboards">
+    Create dashboards and public status pages
+  </Card>
+  
+  <Card title="Environment Variables" icon="gear" href="/configuration/environment-variables">
+    Explore all configuration options
+  </Card>
+</CardGroup>

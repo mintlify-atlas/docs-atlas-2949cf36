@@ -1,0 +1,256 @@
+---
+title: Creating Monitors
+description: Learn how to create and configure monitors to track the health and performance of your services
+---
+
+Monitors are TypeScript files that define health checks for your services. Each monitor runs on a schedule and returns status information that Pongo tracks over time.
+
+## Basic Structure
+
+Create TypeScript files in `pongo/monitors/`. Each file exports a `monitor()` configuration:
+
+```typescript
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Service Name",
+  interval: "5m",
+  timeout: "30s",
+  async handler() {
+    // Your health check logic
+  },
+});
+```
+
+## HTTP Health Checks
+
+<Steps>
+  <Step title="Create the monitor file">
+    Create a new file in `pongo/monitors/`, for example `api.ts`:
+
+    ```typescript
+    import { monitor } from "../../src/lib/config-types";
+
+    export default monitor({
+      name: "API Health",
+      interval: "5m",
+      timeout: "30s",
+
+      async handler() {
+        const start = Date.now();
+        const res = await fetch("https://api.example.com/health");
+        return {
+          status: res.ok ? "up" : "down",
+          responseTime: Date.now() - start,
+          statusCode: res.status,
+        };
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Register the monitor">
+    Add your monitor to `pongo/monitors/index.ts`:
+
+    ```typescript
+    import api from "./api";
+    import database from "./database";
+
+    export default {
+      api,
+      database,
+    };
+    ```
+  </Step>
+
+  <Step title="Start the scheduler">
+    Run the scheduler to begin executing your monitors:
+
+    ```bash
+    bun scheduler
+    ```
+  </Step>
+</Steps>
+
+## Latency Thresholds
+
+You can mark a service as "degraded" when it's slow but still functional:
+
+```typescript
+export default monitor({
+  name: "Latency Sensitive API",
+  interval: "1m",
+  timeout: "10s",
+
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com");
+    const responseTime = Date.now() - start;
+
+    return {
+      status: !res.ok ? "down" : responseTime > 2000 ? "degraded" : "up",
+      responseTime,
+      statusCode: res.status,
+    };
+  },
+});
+```
+
+## Status Page API Integration
+
+Monitor third-party services by integrating with their status page APIs:
+
+```typescript
+export default monitor({
+  name: "Vercel Status",
+  interval: "15m",
+  timeout: "30s",
+
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://www.vercel-status.com/api/v2/status.json");
+    const data = await res.json() as {
+      status: { indicator: string; description: string };
+    };
+    const indicator = data.status.indicator;
+
+    if (indicator === "none") {
+      return {
+        status: "up",
+        responseTime: Date.now() - start,
+        statusCode: res.status,
+      };
+    }
+
+    if (indicator === "minor") {
+      return {
+        status: "degraded",
+        responseTime: Date.now() - start,
+        statusCode: res.status,
+        message: data.status.description,
+      };
+    }
+
+    if (indicator === "major" || indicator === "critical") {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        statusCode: res.status,
+        message: data.status.description,
+      };
+    }
+
+    return {
+      status: "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+      message: `Unknown indicator: ${indicator}`,
+    };
+  },
+});
+```
+
+## Handler Return Values
+
+Your monitor handler must return an object with these fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `status` | `"up" \| "down" \| "degraded"` | Yes | Current service status |
+| `responseTime` | `number` | Yes | Response time in milliseconds |
+| `statusCode` | `number` | No | HTTP status code |
+| `message` | `string` | No | Additional context or error message |
+
+## Scheduling Options
+
+Pongo supports both interval-based and cron-based scheduling:
+
+```typescript
+// Every 30 seconds
+interval: "30s"
+
+// Every 5 minutes
+interval: "5m"
+
+// Every hour
+interval: "1h"
+
+// Cron expression (every 5 minutes)
+interval: "*/5 * * * *"
+
+// Cron expression (daily at 3 AM)
+interval: "0 3 * * *"
+```
+
+## Error Handling
+
+Always wrap your fetch calls in try-catch blocks to handle network errors:
+
+```typescript
+export default monitor({
+  name: "Resilient Monitor",
+  interval: "5m",
+  timeout: "30s",
+
+  async handler() {
+    const start = Date.now();
+
+    try {
+      const res = await fetch("https://api.example.com/health");
+      const responseTime = Date.now() - start;
+
+      if (!res.ok) {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: `HTTP ${res.status}`,
+        };
+      }
+
+      return {
+        status: "up",
+        responseTime,
+        statusCode: res.status,
+      };
+    } catch (error) {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+```
+
+## Environment Variables
+
+Use environment variables for dynamic configuration:
+
+```typescript
+export default monitor({
+  name: "Production API",
+  interval: "5m",
+  timeout: "30s",
+
+  async handler() {
+    const url = process.env.API_URL;
+    if (!url) {
+      return {
+        status: "down",
+        responseTime: 0,
+        message: "API_URL environment variable not set",
+      };
+    }
+
+    const start = Date.now();
+    const res = await fetch(url);
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  },
+});
+```

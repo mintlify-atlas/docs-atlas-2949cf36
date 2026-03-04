@@ -1,0 +1,150 @@
+---
+title: "DashboardConfig"
+description: "Dashboard configuration schema for public status pages"
+---
+
+## DashboardConfig Interface
+
+Defines a status page dashboard grouping multiple monitors.
+
+```typescript
+interface DashboardConfig {
+  name: string;
+  slug: string;
+  public?: boolean;
+  monitors: string[];
+  slaTarget?: number;
+}
+```
+
+### Fields
+
+<ParamField path="name" type="string" required>
+  Display name for the dashboard
+  
+  Shown in the page title and navigation.
+</ParamField>
+
+<ParamField path="slug" type="string" required>
+  URL-friendly identifier for the dashboard
+  
+  Used in routes: `/dashboard/{slug}`. Must be unique across all dashboards.
+</ParamField>
+
+<ParamField path="public" type="boolean" default="false">
+  Whether the dashboard is publicly accessible
+  
+  - `true`: Anyone can view without authentication
+  - `false`: Requires login to access
+</ParamField>
+
+<ParamField path="monitors" type="string[]" required>
+  Array of monitor IDs to include in this dashboard
+  
+  Monitor IDs are filenames (without `.ts`) from `pongo/monitors/`.
+  
+  **Example:** `["api", "database", "cdn"]` references:
+  - `pongo/monitors/api.ts`
+  - `pongo/monitors/database.ts`
+  - `pongo/monitors/cdn.ts`
+</ParamField>
+
+<ParamField path="slaTarget" type="number">
+  Uptime percentage goal for SLA tracking
+  
+  Displayed on dashboard as target vs actual uptime. Common values:
+  - `99.9` - "Three nines" (43.2 min downtime/month)
+  - `99.95` - (21.6 min/month)
+  - `99.99` - "Four nines" (4.32 min/month)
+</ParamField>
+
+## Real Examples
+
+### Public Status Page
+
+```typescript pongo/dashboards/status.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Status",
+  slug: "status",
+  public: true,
+  monitors: ["vercel", "hackernews", "wikipedia"],
+  slaTarget: 99.9,
+} satisfies DashboardConfig;
+```
+
+### Internal Operations Dashboard
+
+```typescript pongo/dashboards/internal.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Internal Services",
+  slug: "internal",
+  public: false,
+  monitors: ["database", "redis", "queue", "worker"],
+  slaTarget: 99.95,
+} satisfies DashboardConfig;
+```
+
+### Regional Dashboard
+
+```typescript pongo/dashboards/us-east.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "US East Region",
+  slug: "us-east",
+  public: true,
+  monitors: [
+    "us-east-api",
+    "us-east-cdn",
+    "us-east-database",
+  ],
+  slaTarget: 99.99,
+} satisfies DashboardConfig;
+```
+
+### Simple Dashboard
+
+```typescript pongo/dashboards/simple.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Core Services",
+  slug: "core",
+  monitors: ["api", "website"],
+} satisfies DashboardConfig;
+```
+
+## File Naming
+
+Dashboard configuration files must:
+- Live in `pongo/dashboards/` directory
+- Use `.ts` extension
+- Export dashboard config with `satisfies DashboardConfig`
+- Filename becomes the dashboard ID
+
+**Example:** `pongo/dashboards/status.ts` creates dashboard with ID `"status"`
+
+## Dashboard URLs
+
+Dashboards are accessible at:
+
+```
+/dashboard/{slug}
+```
+
+**Examples:**
+- `slug: "status"` → `/dashboard/status`
+- `slug: "internal"` → `/dashboard/internal`
+- `slug: "us-east"` → `/dashboard/us-east`
+
+## Monitor Order
+
+Monitors appear on the dashboard in the order specified in the `monitors` array:
+
+```typescript
+monitors: ["api", "database", "cdn"]  // Shows in this order
+```

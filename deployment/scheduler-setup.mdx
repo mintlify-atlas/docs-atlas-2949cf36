@@ -1,0 +1,423 @@
+---
+title: Scheduler Setup
+description: Configure and run the Pongo monitor scheduler
+---
+
+The scheduler is a standalone Bun process that runs monitors on schedule, evaluates alert conditions, and dispatches webhooks with retry logic.
+
+## Overview
+
+The scheduler:
+
+- Executes monitors based on their interval or cron schedule
+- Evaluates alert conditions and fires/resolves alerts
+- Dispatches webhooks to notification channels with exponential backoff retry
+- Provides an HTTP API for health checks and manual triggers
+- Supports multi-region deployments
+
+## Running the Scheduler
+
+### Standalone Process
+
+Start the scheduler in a separate terminal from your main application:
+
+```bash
+bun scheduler
+```
+
+The scheduler will:
+1. Connect to your database (using `DATABASE_URL`)
+2. Load all monitor configurations from `pongo/monitors/`
+3. Start the HTTP API server (default port 3001)
+4. Begin executing monitors according to their schedules
+
+### Docker
+
+The Docker entrypoint can auto-start the scheduler:
+
+```bash
+SCHEDULER_ENABLED=true docker run pongo
+```
+
+Or in your Dockerfile/docker-compose.yml:
+
+```yaml docker-compose.yml
+services:
+  scheduler:
+    build: .
+    command: ["bun", "scheduler"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      PONGO_REGION: us-east
+      SCHEDULER_PORT: 3001
+    depends_on: [db]
+```
+
+### Fly.io
+
+The included `fly.toml` and Dockerfile handle scheduler deployment:
+
+```bash
+fly secrets set SCHEDULER_ENABLED=true
+fly deploy
+```
+
+## HTTP API
+
+The scheduler exposes an HTTP API for monitoring and control.
+
+### Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|--------------|
+| `/health` | GET | Health check with region info and uptime |
+| `/monitors` | GET | List all monitors with current state |
+| `/monitors/:id` | GET | Get single monitor state and statistics |
+| `/monitors/:id/trigger` | POST | Trigger a specific monitor immediately |
+| `/monitors/trigger` | POST | Trigger all monitors immediately |
+
+### Health Check Example
+
+```bash
+curl http://localhost:3001/health
+```
+
+```json
+{
+  "status": "healthy",
+  "region": "us-east",
+  "uptime": 86400,
+  "monitorsLoaded": 12
+}
+```
+
+### Manual Trigger Example
+
+```bash
+curl -X POST http://localhost:3001/monitors/api-health/trigger
+```
+
+```json
+{
+  "success": true,
+  "monitorId": "api-health",
+  "triggeredAt": "2025-12-08T10:00:00Z"
+}
+```
+
+## Environment Variables
+
+### Core Configuration
+
+<ParamField path="SCHEDULER_PORT" type="number" default="3001">
+  HTTP API server port.
+  
+  ```bash
+  SCHEDULER_PORT=3001
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_ENABLED" type="boolean" default="false">
+  Auto-start scheduler in Docker entrypoint.
+  
+  ```bash
+  SCHEDULER_ENABLED=true
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_URL" type="string">
+  Scheduler service URL. Set this in your main app to enable manual monitor runs from the dashboard UI.
+  
+  ```bash
+  SCHEDULER_URL=http://scheduler:3001
+  ```
+</ParamField>
+
+<ParamField path="ENABLE_MANUAL_RUN" type="boolean" default="false">
+  Show manual run button in dashboard UI. Requires `SCHEDULER_URL` to be set.
+  
+  ```bash
+  ENABLE_MANUAL_RUN=true
+  ```
+</ParamField>
+
+### Concurrency and Performance
+
+<ParamField path="SCHEDULER_MAX_CONCURRENCY" type="number" default="10">
+  Maximum number of monitors to execute in parallel.
+  
+  Increase for large monitor fleets:
+  ```bash
+  SCHEDULER_MAX_CONCURRENCY=50
+  ```
+</ParamField>
+
+### Retry Configuration
+
+<ParamField path="SCHEDULER_MAX_RETRIES" type="number" default="3">
+  Number of retry attempts for failed monitor checks.
+  
+  ```bash
+  SCHEDULER_MAX_RETRIES=5
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_RETRY_DELAY_MS" type="number" default="5000">
+  Base retry delay in milliseconds. Uses exponential backoff:
+  - Attempt 1: `SCHEDULER_RETRY_DELAY_MS`
+  - Attempt 2: `SCHEDULER_RETRY_DELAY_MS * 2`
+  - Attempt 3: `SCHEDULER_RETRY_DELAY_MS * 4`
+  
+  ```bash
+  SCHEDULER_RETRY_DELAY_MS=10000  # 10s, 20s, 40s backoff
+  ```
+</ParamField>
+
+## Multi-Region Setup
+
+Deploy multiple scheduler instances across regions for global monitoring:
+
+```bash
+# Region 1 (US East)
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+PONGO_REGION=us-east
+bun scheduler
+
+# Region 2 (EU West)
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+PONGO_REGION=eu-west
+bun scheduler
+
+# Region 3 (Asia Pacific)
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+PONGO_REGION=ap-south
+bun scheduler
+```
+
+### Region Identifier
+
+<ParamField path="PONGO_REGION" type="string" default="default">
+  Region identifier for multi-region deployments. Used in:
+  - Alert region thresholds (`regionThreshold` in monitor config)
+  - Health check responses
+  - Check result metadata
+  
+  ```bash
+  PONGO_REGION=us-east
+  ```
+</ParamField>
+
+### Region-Aware Alerts
+
+Configure alerts to fire based on regional thresholds:
+
+```typescript
+export default monitor({
+  name: "API Health",
+  interval: "1m",
+  alerts: [
+    {
+      id: "api-down",
+      name: "API Down",
+      condition: { consecutiveFailures: 3 },
+      channels: ["slack"],
+      // Fire if ANY region reports failure
+      regionThreshold: "any",
+    },
+    {
+      id: "api-degraded",
+      name: "API Degraded",
+      condition: { status: "degraded", forChecks: 5 },
+      channels: ["slack"],
+      // Fire only if MAJORITY of regions report degraded
+      regionThreshold: "majority",
+    },
+  ],
+  async handler() {
+    // ...
+  },
+});
+```
+
+**Region threshold options:**
+- `"any"` - Alert fires if any region meets condition
+- `"all"` - Alert fires only if all regions meet condition
+- `"majority"` - Alert fires if majority of regions meet condition
+- `number` - Alert fires if at least N regions meet condition
+
+## Complete Configuration Example
+
+### Development (Single Region)
+
+```bash .env
+# Database
+DATABASE_URL=file:./pongo/pongo.db
+
+# Scheduler
+SCHEDULER_PORT=3001
+SCHEDULER_MAX_CONCURRENCY=10
+SCHEDULER_MAX_RETRIES=3
+SCHEDULER_RETRY_DELAY_MS=5000
+```
+
+Start both services:
+```bash
+bun dev              # Terminal 1 - Dashboard
+bun scheduler        # Terminal 2 - Scheduler
+```
+
+### Production (Multi-Region)
+
+```bash .env.us-east
+# Database (shared)
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+
+# Region
+PONGO_REGION=us-east
+
+# Scheduler
+SCHEDULER_PORT=3001
+SCHEDULER_MAX_CONCURRENCY=50
+SCHEDULER_MAX_RETRIES=5
+SCHEDULER_RETRY_DELAY_MS=10000
+```
+
+```bash .env.eu-west
+# Database (shared)
+DATABASE_URL=postgres://user:pass@db.host.com:5432/pongo
+
+# Region
+PONGO_REGION=eu-west
+
+# Scheduler
+SCHEDULER_PORT=3001
+SCHEDULER_MAX_CONCURRENCY=50
+SCHEDULER_MAX_RETRIES=5
+SCHEDULER_RETRY_DELAY_MS=10000
+```
+
+### Docker Compose (Single Region)
+
+```yaml docker-compose.yml
+services:
+  pongo:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      SCHEDULER_URL: http://scheduler:3001
+      ENABLE_MANUAL_RUN: "true"
+      ACCESS_CODE: your-password
+    depends_on: [db]
+
+  scheduler:
+    build: .
+    command: ["bun", "scheduler"]
+    ports: ["3001:3001"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      SCHEDULER_PORT: "3001"
+      SCHEDULER_MAX_CONCURRENCY: "20"
+      SCHEDULER_MAX_RETRIES: "5"
+      SCHEDULER_RETRY_DELAY_MS: "5000"
+      PONGO_REGION: us-east
+    depends_on: [db]
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pongo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+## Monitoring the Scheduler
+
+### Health Checks
+
+Regularly check scheduler health:
+
+```bash
+curl http://scheduler:3001/health
+```
+
+Integrate with your container orchestration health checks:
+
+```yaml docker-compose.yml
+scheduler:
+  # ...
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+```
+
+### Monitor State
+
+Check individual monitor state:
+
+```bash
+curl http://scheduler:3001/monitors/api-health
+```
+
+```json
+{
+  "id": "api-health",
+  "name": "API Health",
+  "lastCheck": "2025-12-08T10:00:00Z",
+  "lastStatus": "up",
+  "consecutiveFailures": 0,
+  "consecutiveSuccesses": 42,
+  "nextCheck": "2025-12-08T10:01:00Z"
+}
+```
+
+## Troubleshooting
+
+### Scheduler Won't Start
+
+1. **Database Connection**: Verify `DATABASE_URL` is correct
+   ```bash
+   bun scheduler  # Check error output
+   ```
+
+2. **Port Conflict**: Ensure port 3001 (or your custom `SCHEDULER_PORT`) is available
+   ```bash
+   lsof -i :3001
+   ```
+
+3. **Monitor Configuration**: Check for syntax errors in `pongo/monitors/`
+   ```bash
+   bun run lint
+   ```
+
+### Monitors Not Running
+
+1. **Check Monitor Registration**: Ensure monitors are exported in `pongo/monitors/index.ts`
+2. **Verify Schedule**: Check monitor `interval` or cron expression syntax
+3. **Review Logs**: Look for execution errors in scheduler output
+
+### High Latency
+
+1. **Increase Concurrency**: Raise `SCHEDULER_MAX_CONCURRENCY` if you have many monitors
+2. **Database Performance**: Check database connection pool and query performance
+3. **Monitor Timeouts**: Ensure monitor `timeout` values are appropriate
+
+### Failed Checks
+
+1. **Network Access**: Verify scheduler can reach monitored endpoints
+2. **Retry Configuration**: Adjust `SCHEDULER_MAX_RETRIES` and `SCHEDULER_RETRY_DELAY_MS`
+3. **Monitor Handler Errors**: Review monitor handler code for bugs
+
+<Note>
+  **Database Sharing**: All scheduler instances must share the same database. This ensures consistent state across regions.
+</Note>
+
+<Tip>
+  **Gradual Rollout**: When deploying multi-region schedulers, start with one region and verify it's working before adding more regions.
+</Tip>

@@ -1,0 +1,319 @@
+---
+title: "Scheduler Configuration"
+description: "Environment variables and configuration options for the Pongo scheduler service"
+---
+
+The scheduler is a standalone Bun process that runs monitors on schedule, evaluates alert conditions, and dispatches webhook notifications with retry logic.
+
+## Running the Scheduler
+
+Start the scheduler service:
+
+```bash
+bun scheduler
+```
+
+The scheduler will:
+
+1. Load all monitor configurations from `pongo/monitors/`
+2. Start the HTTP API server (default port `3001`)
+3. Schedule monitors based on their `interval` settings
+4. Execute monitors with retry logic on failures
+5. Evaluate alert conditions after each check
+6. Dispatch webhooks to configured channels
+
+## Environment Variables
+
+### SCHEDULER_PORT
+
+**Type:** `number`  
+**Default:** `3001`
+
+HTTP API port for the scheduler service.
+
+```bash
+SCHEDULER_PORT=3001
+```
+
+The API exposes endpoints for health checks, monitor state inspection, and manual trigger operations. See [Scheduler Endpoints](/api/scheduler-endpoints) for details.
+
+---
+
+### SCHEDULER_MAX_CONCURRENCY
+
+**Type:** `number`  
+**Default:** `10`
+
+Maximum number of monitors that can run concurrently.
+
+```bash
+SCHEDULER_MAX_CONCURRENCY=10
+```
+
+Use this to control resource usage and prevent overwhelming downstream services when running many monitors. If more monitors are scheduled to run simultaneously, they will be queued until a slot becomes available.
+
+**Example:**
+
+```bash
+# For high-traffic monitoring with 100+ monitors
+SCHEDULER_MAX_CONCURRENCY=50
+```
+
+---
+
+### SCHEDULER_MAX_RETRIES
+
+**Type:** `number`  
+**Default:** `3`
+
+Maximum number of retry attempts for failed monitor checks.
+
+```bash
+SCHEDULER_MAX_RETRIES=3
+```
+
+When a monitor fails (throws an exception, times out, or returns an error), the scheduler will retry up to this many times before marking the check as failed. Retries use exponential backoff based on `SCHEDULER_RETRY_DELAY_MS`.
+
+**Example:**
+
+```bash
+# Disable retries for faster failure detection
+SCHEDULER_MAX_RETRIES=0
+
+# More aggressive retry for flaky services
+SCHEDULER_MAX_RETRIES=5
+```
+
+---
+
+### SCHEDULER_RETRY_DELAY_MS
+
+**Type:** `number`  
+**Default:** `5000`
+
+Base delay in milliseconds between retry attempts. Uses exponential backoff.
+
+```bash
+SCHEDULER_RETRY_DELAY_MS=5000
+```
+
+The actual delay grows exponentially with each retry:
+
+- Retry 1: `5000ms` (5 seconds)
+- Retry 2: `10000ms` (10 seconds)
+- Retry 3: `20000ms` (20 seconds)
+
+**Example:**
+
+```bash
+# Faster retries for time-sensitive checks
+SCHEDULER_RETRY_DELAY_MS=2000
+
+# Slower retries to avoid overwhelming failing services
+SCHEDULER_RETRY_DELAY_MS=10000
+```
+
+---
+
+### SCHEDULER_URL
+
+**Type:** `string`  
+**Default:** _(none)_
+
+Scheduler service URL for manual trigger operations from the dashboard.
+
+```bash
+SCHEDULER_URL=http://localhost:3001
+```
+
+When set, the dashboard can make HTTP requests to this URL to manually trigger monitor executions. This is useful for:
+
+- Testing new monitors without waiting for the next scheduled run
+- Re-checking after fixing an issue
+- Bulk triggering monitors from the UI
+
+**Production example:**
+
+```bash
+SCHEDULER_URL=https://scheduler.pongo.internal:3001
+```
+
+<Note>
+This must be accessible from the Next.js app server, not the browser. Use internal network URLs for security.
+</Note>
+
+---
+
+### SCHEDULER_ENABLED
+
+**Type:** `boolean`  
+**Default:** `false`
+
+Auto-start the scheduler when running in Docker.
+
+```bash
+SCHEDULER_ENABLED=true
+```
+
+When `true`, the Docker entrypoint will automatically start the scheduler service alongside the Next.js app. This is useful for single-container deployments where you want both services in one process.
+
+**Docker Compose example:**
+
+```yaml
+services:
+  pongo:
+    build: .
+    environment:
+      SCHEDULER_ENABLED: "true"
+      ARCHIVAL_ENABLED: "true"
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+```
+
+For production, it's recommended to run the scheduler as a separate service for better isolation and scaling.
+
+---
+
+### ENABLE_MANUAL_RUN
+
+**Type:** `boolean`  
+**Default:** `false`
+
+Show the manual run button in the dashboard UI.
+
+```bash
+ENABLE_MANUAL_RUN=true
+```
+
+When enabled along with `SCHEDULER_URL`, users will see a "Run Now" button next to each monitor in the dashboard. This sends a POST request to `/monitors/:id/trigger` on the scheduler service.
+
+**Example configuration:**
+
+```bash
+SCHEDULER_URL=http://localhost:3001
+ENABLE_MANUAL_RUN=true
+```
+
+## Region Configuration
+
+The scheduler automatically detects its region from environment variables:
+
+```bash
+PONGO_REGION=us-east
+```
+
+Or on Fly.io, it will use:
+
+```bash
+FLY_REGION=sjc  # automatically set by Fly.io
+```
+
+If neither is set, the region defaults to `"default"`.
+
+### Multi-Region Deployment
+
+Deploy multiple schedulers pointing at the same database:
+
+```bash
+# Region 1
+PONGO_REGION=us-east bun scheduler
+
+# Region 2
+PONGO_REGION=eu-west bun scheduler
+
+# Region 3
+PONGO_REGION=ap-south bun scheduler
+```
+
+Each scheduler:
+
+- Runs all monitors independently
+- Stores results with region tags
+- Contributes to alert evaluation
+
+Configure alerts with `regionThreshold` to control when they fire:
+
+```typescript
+alerts: [
+  {
+    id: "api-down",
+    condition: { consecutiveFailures: 3 },
+    regionThreshold: "majority",  // Fire if majority of regions report down
+    channels: ["slack"],
+  },
+]
+```
+
+**Region threshold options:**
+
+- `"any"` - Fire if any region reports the condition
+- `"all"` - Fire only if all regions report the condition
+- `"majority"` - Fire if more than 50% of regions report the condition
+- `2` (number) - Fire if at least 2 regions report the condition
+
+## Retry Behavior
+
+The scheduler implements exponential backoff for failed checks:
+
+1. Monitor handler executes
+2. If it fails (exception, timeout, or error status):
+   - Wait `SCHEDULER_RETRY_DELAY_MS * (2 ^ attemptNumber)`
+   - Retry up to `SCHEDULER_MAX_RETRIES` times
+3. After all retries are exhausted:
+   - Mark check as failed
+   - Record result in database
+   - Evaluate alert conditions
+
+**Example timeline with defaults:**
+
+```
+00:00 - Initial attempt fails
+00:05 - Retry 1 fails (after 5s delay)
+00:15 - Retry 2 fails (after 10s delay)
+00:35 - Retry 3 fails (after 20s delay)
+00:35 - Mark as failed, evaluate alerts
+```
+
+## Graceful Shutdown
+
+The scheduler handles `SIGINT` and `SIGTERM` signals:
+
+```bash
+# Stop the scheduler gracefully
+kill -SIGTERM <pid>
+```
+
+On shutdown:
+
+1. Stop accepting new monitor executions
+2. Wait for in-flight checks to complete
+3. Clean up resources
+4. Exit
+
+## Configuration Summary
+
+Here's a complete configuration example for production:
+
+```bash
+# .env
+DATABASE_URL=postgres://user:password@db.internal:5432/pongo
+PONGO_REGION=us-east
+
+# Scheduler settings
+SCHEDULER_PORT=3001
+SCHEDULER_MAX_CONCURRENCY=50
+SCHEDULER_MAX_RETRIES=3
+SCHEDULER_RETRY_DELAY_MS=5000
+
+# Dashboard integration
+SCHEDULER_URL=http://scheduler.internal:3001
+ENABLE_MANUAL_RUN=true
+
+# Docker deployment
+SCHEDULER_ENABLED=false  # Run as separate service
+```
+
+## Related
+
+- [Scheduler Endpoints](/api/scheduler-endpoints) - HTTP API reference
+- [Monitors](/monitors) - Monitor configuration guide
+- [Alerts](/alerts) - Alert configuration and conditions

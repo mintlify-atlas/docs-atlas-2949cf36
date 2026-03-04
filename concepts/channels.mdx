@@ -1,0 +1,353 @@
+---
+title: Channels
+description: Configure webhook destinations for alert notifications
+---
+
+Channels define where alert notifications are sent. They're webhook endpoints that receive JSON payloads when alerts fire or resolve.
+
+## What are Channels?
+
+Channels are webhook configurations that:
+
+- Receive alert notifications via HTTP POST
+- Support custom headers for authentication
+- Integrate with services like Slack, PagerDuty, Discord, and custom webhooks
+- Retry failed deliveries with exponential backoff
+- Are referenced by name in alert configurations
+
+## ChannelConfig Interface
+
+Channels are defined in `pongo/channels.ts`:
+
+```typescript
+export interface ChannelConfig {
+  type: "webhook";
+  url: string;
+  headers?: Record<string, string>;
+}
+```
+
+<ParamField path="type" type="'webhook'" required>
+  Channel type. Currently only `"webhook"` is supported.
+</ParamField>
+
+<ParamField path="url" type="string" required>
+  Webhook endpoint URL that will receive POST requests with alert payloads.
+</ParamField>
+
+<ParamField path="headers" type="Record<string, string>">
+  Optional HTTP headers to include in webhook requests. Useful for authentication tokens or API keys.
+</ParamField>
+
+## Configuration
+
+Define all channels in a single file:
+
+```typescript pongo/channels.ts
+import { channels } from "../src/lib/config-types";
+
+export default channels({
+  slack: {
+    type: "webhook",
+    url: process.env.SLACK_WEBHOOK_URL!,
+  },
+  pagerduty: {
+    type: "webhook",
+    url: "https://events.pagerduty.com/v2/enqueue",
+    headers: {
+      Authorization: `Token token=${process.env.PAGERDUTY_TOKEN}`,
+    },
+  },
+});
+```
+
+Use the `channels()` helper function for full type inference and validation.
+
+<Note>
+  Channel names (object keys) must match the values referenced in alert `channels` arrays.
+</Note>
+
+## Webhook Payload
+
+When alerts fire or resolve, Pongo sends a POST request with this payload:
+
+```typescript
+{
+  event: "alert.fired" | "alert.resolved",
+  alert: {
+    id: string,
+    name: string,
+    monitorId: string,
+    monitorName: string,
+    severity: "critical" | "warning" | "info",
+  },
+  timestamp: string, // ISO 8601
+  snapshot: {
+    consecutiveFailures: number,
+    consecutiveSuccesses: number,
+    lastStatus: string,
+    lastResponseTimeMs: number | null,
+    lastMessage: string | null,
+  },
+  checkResult: {
+    id: string,
+    status: string,
+    responseTimeMs: number,
+    message: string | null,
+    checkedAt: string, // ISO 8601
+  },
+  region?: string,
+  firingRegions?: string[],
+  healthyRegions?: string[],
+}
+```
+
+### Payload Fields
+
+<ParamField path="event" type="string">
+  Either `"alert.fired"` when the alert starts firing, or `"alert.resolved"` when it clears.
+</ParamField>
+
+<ParamField path="alert" type="object">
+  Alert metadata including ID, name, associated monitor, and severity level.
+</ParamField>
+
+<ParamField path="timestamp" type="string">
+  ISO 8601 timestamp when the webhook was sent.
+</ParamField>
+
+<ParamField path="snapshot" type="object">
+  Current state snapshot including consecutive failure/success counts and last known values.
+</ParamField>
+
+<ParamField path="checkResult" type="object">
+  Details of the check that triggered the alert, including status, response time, and any error messages.
+</ParamField>
+
+<ParamField path="region" type="string">
+  Optional region identifier if running multi-region monitoring.
+</ParamField>
+
+<ParamField path="firingRegions" type="string[]">
+  List of regions where the alert is currently firing (multi-region deployments).
+</ParamField>
+
+<ParamField path="healthyRegions" type="string[]">
+  List of regions where the check is passing (multi-region deployments).
+</ParamField>
+
+## Webhook Delivery
+
+Pongo ensures reliable webhook delivery:
+
+- **Immediate delivery**: Webhooks are sent as soon as alerts fire or resolve
+- **Retry logic**: Failed requests retry with exponential backoff
+- **Timeout**: Requests timeout after 30 seconds
+- **Concurrent delivery**: Multiple channels receive webhooks in parallel
+
+## Integration Examples
+
+### Slack
+
+Create a [Slack Incoming Webhook](https://api.slack.com/messaging/webhooks):
+
+```typescript
+slack: {
+  type: "webhook",
+  url: process.env.SLACK_WEBHOOK_URL!,
+}
+```
+
+Slack will automatically format the JSON payload. For custom formatting, use a Slack app with more control.
+
+### PagerDuty
+
+Use the [PagerDuty Events API v2](https://developer.pagerduty.com/docs/ZG9jOjExMDI5NTgw-events-api-v2-overview):
+
+```typescript
+pagerduty: {
+  type: "webhook",
+  url: "https://events.pagerduty.com/v2/enqueue",
+  headers: {
+    Authorization: `Token token=${process.env.PAGERDUTY_TOKEN}`,
+    "Content-Type": "application/json",
+  },
+}
+```
+
+<Note>
+  You may need to transform Pongo's payload format to match PagerDuty's expected schema. Consider using a proxy service or serverless function for transformation.
+</Note>
+
+### Discord
+
+Create a [Discord webhook](https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks):
+
+```typescript
+discord: {
+  type: "webhook",
+  url: process.env.DISCORD_WEBHOOK_URL!,
+}
+```
+
+### Custom Webhook
+
+Send to any HTTP endpoint:
+
+```typescript
+"custom-api": {
+  type: "webhook",
+  url: "https://api.example.com/pongo/alerts",
+  headers: {
+    "X-API-Key": process.env.CUSTOM_API_KEY!,
+    "User-Agent": "Pongo/1.0",
+  },
+}
+```
+
+### Microsoft Teams
+
+Create an [Incoming Webhook connector](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook):
+
+```typescript
+teams: {
+  type: "webhook",
+  url: process.env.TEAMS_WEBHOOK_URL!,
+}
+```
+
+### Email via Webhook Service
+
+Use a service like [Zapier](https://zapier.com) or [Make](https://www.make.com) to convert webhooks to emails:
+
+```typescript
+email: {
+  type: "webhook",
+  url: process.env.ZAPIER_WEBHOOK_URL!,
+}
+```
+
+## Using Channels in Alerts
+
+Reference channel names in your monitor alert configurations:
+
+```typescript
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "API Health",
+  interval: "1m",
+  
+  alerts: [
+    {
+      id: "api-down",
+      name: "API Down",
+      condition: { consecutiveFailures: 3 },
+      channels: ["slack", "pagerduty"], // matches channel names
+      severity: "critical",
+    },
+  ],
+  
+  async handler() {
+    const res = await fetch("https://api.example.com/health");
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - Date.now(),
+      statusCode: res.status,
+    };
+  },
+});
+```
+
+When the alert fires, both Slack and PagerDuty receive the webhook.
+
+## Environment Variables
+
+Store sensitive webhook URLs and tokens in environment variables:
+
+```bash .env
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx/yyy/zzz
+PAGERDUTY_TOKEN=your-integration-key
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
+CUSTOM_API_KEY=your-secret-key
+```
+
+Reference them in your channels configuration:
+
+```typescript
+export default channels({
+  slack: {
+    type: "webhook",
+    url: process.env.SLACK_WEBHOOK_URL!,
+  },
+});
+```
+
+<Note>
+  Never commit secrets to version control. Use `.env` files locally and environment variable configuration in production.
+</Note>
+
+## Testing Channels
+
+Test webhook delivery by:
+
+1. Temporarily lowering alert thresholds (e.g., `consecutiveFailures: 1`)
+2. Creating a test monitor that intentionally fails
+3. Checking your channel destination for the webhook
+4. Verifying the payload format and content
+
+### Testing with webhook.site
+
+Use [webhook.site](https://webhook.site) to inspect webhook payloads:
+
+```typescript
+test: {
+  type: "webhook",
+  url: "https://webhook.site/your-unique-url",
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use environment variables for secrets">
+    Always store webhook URLs and API keys in environment variables, never hardcode them in source files.
+  </Accordion>
+  
+  <Accordion title="Route by severity">
+    Create different channels for different severity levels. Send critical alerts to PagerDuty, warnings to Slack.
+  </Accordion>
+  
+  <Accordion title="Test webhook endpoints">
+    Verify your webhooks work before deploying to production. Use test monitors or webhook.site for validation.
+  </Accordion>
+  
+  <Accordion title="Handle webhook transformation">
+    If your destination service expects a specific payload format, use a proxy service or serverless function to transform Pongo's payload.
+  </Accordion>
+  
+  <Accordion title="Monitor webhook failures">
+    Check Pongo logs for webhook delivery failures. Failed webhooks indicate configuration issues or service outages.
+  </Accordion>
+</AccordionGroup>
+
+## Retry Behavior
+
+Failed webhook deliveries are automatically retried:
+
+- **Max retries**: Configurable via `SCHEDULER_MAX_RETRIES` (default: 3)
+- **Retry delay**: Exponential backoff starting at `SCHEDULER_RETRY_DELAY_MS` (default: 5000ms)
+- **Timeout**: 30 seconds per request
+
+After exhausting retries, the failure is logged but the alert continues to track its state.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Alerts" icon="bell" href="/concepts/alerts">
+    Configure alerts that use channels
+  </Card>
+  <Card title="Monitors" icon="activity" href="/concepts/monitors">
+    Create monitors with alert rules
+  </Card>
+</CardGroup>

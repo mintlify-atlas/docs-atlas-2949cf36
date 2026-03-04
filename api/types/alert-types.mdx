@@ -1,0 +1,268 @@
+---
+title: 'Alert Types'
+description: 'TypeScript type definitions for alerts and alert conditions'
+---
+
+## AlertConfig
+
+Alert definition within a monitor configuration.
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the alert
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Display name for the alert
+</ResponseField>
+
+<ResponseField name="condition" type="AlertCondition" required>
+  Declarative condition or callback function that determines when to fire
+</ResponseField>
+
+<ResponseField name="channels" type="string[]" required>
+  Array of channel IDs to notify when the alert fires
+</ResponseField>
+
+<ResponseField name="severity" type="AlertSeverity">
+  Severity level of the alert. Defaults to "warning".
+</ResponseField>
+
+<ResponseField name="regionThreshold" type="RegionThreshold">
+  Multi-region threshold for firing. Defaults to "any".
+</ResponseField>
+
+<ResponseField name="escalateAfterMs" type="number">
+  Re-notify if alert stays firing for this many milliseconds
+</ResponseField>
+
+```typescript
+export interface AlertConfig {
+  id: string;
+  name: string;
+  condition: AlertCondition;
+  channels: string[];
+  severity?: AlertSeverity;
+  regionThreshold?: RegionThreshold;
+  /** Re-notify if alert stays firing for this many ms */
+  escalateAfterMs?: number;
+}
+```
+
+## DeclarativeCondition
+
+Declarative alert conditions that can be configured without writing code.
+
+```typescript
+export type DeclarativeCondition =
+  | { consecutiveFailures: number }
+  | { consecutiveSuccesses: number }
+  | { latencyAboveMs: number; forChecks?: number }
+  | { status: "down" | "degraded"; forChecks?: number }
+  | { downForMs: number }
+  | { upForMs: number };
+```
+
+<ResponseField name="consecutiveFailures" type="number">
+  Fire when N consecutive check failures occur
+</ResponseField>
+
+<ResponseField name="consecutiveSuccesses" type="number">
+  Fire when N consecutive check successes occur (used for recovery alerts)
+</ResponseField>
+
+<ResponseField name="latencyAboveMs" type="number">
+  Fire when latency exceeds this threshold in milliseconds
+</ResponseField>
+
+<ResponseField name="forChecks" type="number">
+  Optional: number of checks the condition must be true for (used with `latencyAboveMs` and `status`)
+</ResponseField>
+
+<ResponseField name="status" type="'down' | 'degraded'">
+  Fire when monitor reaches this status
+</ResponseField>
+
+<ResponseField name="downForMs" type="number">
+  Fire when monitor has been down for this duration in milliseconds
+</ResponseField>
+
+<ResponseField name="upForMs" type="number">
+  Fire when monitor has been up for this duration in milliseconds
+</ResponseField>
+
+## ConditionCallback
+
+Callback-based condition function for advanced custom logic.
+
+```typescript
+export type ConditionCallback = (
+  result: CheckResultWithId,
+  history: CheckResultWithId[],
+) => boolean;
+```
+
+<ResponseField name="result" type="CheckResultWithId">
+  The current check result with ID
+</ResponseField>
+
+<ResponseField name="history" type="CheckResultWithId[]">
+  Array of recent check results for historical analysis
+</ResponseField>
+
+<ResponseField name="returns" type="boolean">
+  Return `true` to fire the alert, `false` otherwise
+</ResponseField>
+
+## AlertSeverity
+
+Alert severity levels.
+
+```typescript
+export type AlertSeverity = "critical" | "warning" | "info";
+```
+
+<ResponseField name="critical" type="literal">
+  Critical severity - requires immediate attention
+</ResponseField>
+
+<ResponseField name="warning" type="literal">
+  Warning severity - should be investigated
+</ResponseField>
+
+<ResponseField name="info" type="literal">
+  Informational severity - for awareness only
+</ResponseField>
+
+## AlertStatus
+
+Alert state in memory and database.
+
+```typescript
+export type AlertStatus = "ok" | "firing";
+```
+
+<ResponseField name="ok" type="literal">
+  Alert condition is not met
+</ResponseField>
+
+<ResponseField name="firing" type="literal">
+  Alert condition is met and alert is firing
+</ResponseField>
+
+## AlertEventType
+
+Alert event types for webhook notifications.
+
+```typescript
+export type AlertEventType = "fired" | "resolved";
+```
+
+<ResponseField name="fired" type="literal">
+  Alert has started firing
+</ResponseField>
+
+<ResponseField name="resolved" type="literal">
+  Alert has been resolved and is no longer firing
+</ResponseField>
+
+## RegionThreshold
+
+Region threshold for multi-region alerting.
+
+```typescript
+export type RegionThreshold = "any" | "majority" | "all" | number;
+```
+
+<ResponseField name="any" type="literal">
+  Fire if any region triggers (default)
+</ResponseField>
+
+<ResponseField name="majority" type="literal">
+  Fire if more than 50% of regions trigger
+</ResponseField>
+
+<ResponseField name="all" type="literal">
+  Fire only if all regions trigger
+</ResponseField>
+
+<ResponseField name="number" type="number">
+  Fire if N or more regions trigger
+</ResponseField>
+
+## CheckResultWithId
+
+Check result with ID for database references and alert evaluation.
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the check result
+</ResponseField>
+
+<ResponseField name="monitorId" type="string" required>
+  ID of the monitor that performed the check
+</ResponseField>
+
+<ResponseField name="status" type="'up' | 'down' | 'degraded' | 'pending'" required>
+  Status of the check
+</ResponseField>
+
+<ResponseField name="responseTimeMs" type="number" required>
+  Response time in milliseconds
+</ResponseField>
+
+<ResponseField name="statusCode" type="number | null" required>
+  HTTP status code if applicable, null otherwise
+</ResponseField>
+
+<ResponseField name="message" type="string | null" required>
+  Optional message describing the check result
+</ResponseField>
+
+<ResponseField name="checkedAt" type="Date" required>
+  Timestamp when the check was performed
+</ResponseField>
+
+```typescript
+export interface CheckResultWithId {
+  id: string;
+  monitorId: string;
+  status: "up" | "down" | "degraded" | "pending";
+  responseTimeMs: number;
+  statusCode: number | null;
+  message: string | null;
+  checkedAt: Date;
+}
+```
+
+## AlertSnapshot
+
+Snapshot of monitor state when an alert fires.
+
+<ResponseField name="consecutiveFailures" type="number" required>
+  Number of consecutive failures at the time of firing
+</ResponseField>
+
+<ResponseField name="consecutiveSuccesses" type="number" required>
+  Number of consecutive successes at the time of firing
+</ResponseField>
+
+<ResponseField name="lastStatus" type="string" required>
+  Last status of the monitor
+</ResponseField>
+
+<ResponseField name="lastResponseTimeMs" type="number | null" required>
+  Last response time in milliseconds, or null if not available
+</ResponseField>
+
+<ResponseField name="lastMessage" type="string | null" required>
+  Last message from the monitor check, or null if not available
+</ResponseField>
+
+```typescript
+export interface AlertSnapshot {
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+  lastStatus: string;
+  lastResponseTimeMs: number | null;
+  lastMessage: string | null;
+}
+```

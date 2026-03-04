@@ -1,0 +1,270 @@
+---
+title: SLA Tracking
+description: Monitor uptime percentages, response times, and service level agreement compliance
+---
+
+## Overview
+
+SLA (Service Level Agreement) tracking helps you monitor whether your services meet uptime and performance commitments. Pongo automatically calculates uptime percentages and displays them on dashboards alongside your defined SLA targets.
+
+## Configuring SLA Targets
+
+Set SLA targets at the dashboard level:
+
+```typescript
+// pongo/dashboards/production.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Production",
+  slug: "production",
+  public: true,
+  slaTarget: 99.9,  // 99.9% uptime target
+  monitors: ["api", "database", "cdn"],
+} satisfies DashboardConfig;
+```
+
+### Common SLA Targets
+
+| SLA Target | Downtime per Year | Downtime per Month | Downtime per Day |
+|---|---|---|---|
+| 99% | 3.65 days | 7.31 hours | 14.40 minutes |
+| 99.5% | 1.83 days | 3.65 hours | 7.20 minutes |
+| 99.9% | 8.77 hours | 43.83 minutes | 1.44 minutes |
+| 99.95% | 4.38 hours | 21.92 minutes | 43.20 seconds |
+| 99.99% | 52.60 minutes | 4.38 minutes | 8.64 seconds |
+| 99.999% | 5.26 minutes | 26.30 seconds | 0.86 seconds |
+
+## Uptime Calculation
+
+Pongo calculates uptime percentage using check results:
+
+```typescript
+const uptime = (successfulChecks / totalChecks) * 100;
+```
+
+### Status Classification
+
+- **Up**: Counts toward successful checks
+- **Down**: Counts as failure
+- **Degraded**: Configurable (typically counts as partial success)
+
+### Time Windows
+
+Uptime is calculated across multiple time windows:
+
+- **Last 24 hours**
+- **Last 7 days**
+- **Last 30 days**
+- **Last 90 days**
+- **All time**
+
+This allows you to track both recent performance and long-term trends.
+
+## Response Time Tracking
+
+Beyond uptime, SLA tracking includes response time metrics:
+
+### Latency Percentiles
+
+- **P50 (median)**: 50% of requests are faster than this
+- **P95**: 95% of requests are faster than this (excludes outliers)
+- **P99**: 99% of requests are faster than this (catches slowest 1%)
+
+### Average Response Time
+
+Calculated across all successful checks in the time window.
+
+## Status Distribution
+
+Dashboards display how much time services spend in each state:
+
+```
+Up: 99.2% (23h 48m)
+Degraded: 0.5% (7m)
+Down: 0.3% (4m)
+```
+
+This breakdown helps identify:
+- **Chronic issues**: High percentage of "down" time
+- **Performance problems**: Frequent "degraded" status
+- **Stability**: Consistent "up" status
+
+## Dashboard Display
+
+### SLA Indicator
+
+Dashboards show current uptime against the target:
+
+```
+Uptime: 99.87% / 99.9% target ✓
+```
+
+- **Green checkmark**: Meeting SLA
+- **Red warning**: Below SLA target
+
+### Visual Components
+
+1. **Uptime Badge**: Prominent display of current uptime percentage
+2. **SLA Progress Bar**: Visual indicator of target achievement
+3. **Status Distribution Pie Chart**: Breakdown of up/degraded/down time
+4. **Response Time Chart**: Historical response time trends with P50/P95/P99 lines
+5. **Uptime Bars**: Color-coded timeline showing service status over time
+
+## Monitor-Level Metrics
+
+Each monitor in a dashboard tracks its own metrics:
+
+```typescript
+{
+  monitorId: "api",
+  uptime: 99.95,
+  avgResponseTime: 145,
+  p50: 120,
+  p95: 280,
+  p99: 450,
+  statusDistribution: {
+    up: 99.95,
+    degraded: 0.03,
+    down: 0.02
+  }
+}
+```
+
+This allows you to:
+- Identify which services are impacting overall SLA
+- Prioritize improvements based on worst performers
+- Track individual service commitments
+
+## Setting Performance Thresholds
+
+Use monitor handlers to define what constitutes "degraded" vs "up":
+
+```typescript
+export default monitor({
+  name: "API Latency SLA",
+  interval: "1m",
+  
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com");
+    const responseTime = Date.now() - start;
+    
+    return {
+      status: !res.ok 
+        ? "down" 
+        : responseTime > 2000 
+          ? "degraded"  // SLA: response time must be < 2s
+          : "up",
+      responseTime,
+      statusCode: res.status,
+    };
+  },
+});
+```
+
+This ensures your uptime percentage reflects both availability **and** performance requirements.
+
+## Alert Integration
+
+Combine SLA tracking with alerts to notify when targets are at risk:
+
+```typescript
+export default monitor({
+  name: "API",
+  interval: "1m",
+  
+  alerts: [
+    {
+      id: "sla-at-risk",
+      name: "SLA At Risk",
+      condition: { consecutiveFailures: 5 },  // 5 minutes down = risk
+      channels: ["slack"],
+      severity: "warning",
+    },
+    {
+      id: "sla-breach",
+      name: "SLA Breach",
+      condition: { consecutiveFailures: 15 },  // 15 minutes = breach
+      channels: ["pagerduty"],
+      severity: "critical",
+    },
+  ],
+  
+  async handler() { /* ... */ },
+});
+```
+
+## Public Status Page Display
+
+When `public: true`, status pages show:
+
+1. **Current uptime percentage** with SLA target
+2. **Response time charts** with historical trends
+3. **Latency percentiles** (P50, P95, P99)
+4. **Status distribution** pie chart
+5. **Uptime bars** showing 90-day history
+
+This transparency helps users understand service reliability and sets expectations.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Set Realistic Targets" icon="crosshairs">
+    Start with achievable SLA targets (99% or 99.5%) and increase as reliability improves.
+  </Card>
+  
+  <Card title="Include Degraded States" icon="gauge">
+    Don't just track up/down—use "degraded" for slow responses or partial outages.
+  </Card>
+  
+  <Card title="Monitor Multiple Time Windows" icon="clock">
+    Track 24h, 7d, and 30d uptime to spot both acute and chronic issues.
+  </Card>
+  
+  <Card title="Alert Before Breach" icon="bell">
+    Set up early warning alerts before you're in danger of missing SLA commitments.
+  </Card>
+</CardGroup>
+
+## Calculating SLA Credits
+
+Many SLA agreements include service credits for downtime. Use check results to calculate:
+
+```typescript
+// Example: Calculate monthly SLA compliance
+const monthlyChecks = await getCheckResults({
+  startDate: startOfMonth(),
+  endDate: endOfMonth(),
+});
+
+const totalChecks = monthlyChecks.length;
+const upChecks = monthlyChecks.filter(c => c.status === "up").length;
+const uptime = (upChecks / totalChecks) * 100;
+
+if (uptime < 99.9) {
+  const breachMinutes = ((99.9 - uptime) / 100) * 43800; // minutes in month
+  const creditPercent = calculateCredit(breachMinutes);
+  console.log(`SLA breach: ${creditPercent}% credit owed`);
+}
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Dashboards" icon="chart-line" href="/core-concepts/dashboards">
+    Configure dashboards with SLA targets
+  </Card>
+  
+  <Card title="Monitors" icon="heart-pulse" href="/core-concepts/monitors">
+    Create monitors with performance thresholds
+  </Card>
+  
+  <Card title="Alerts" icon="bell" href="/core-concepts/alerts">
+    Set up alerts for SLA breach risks
+  </Card>
+  
+  <Card title="Status Pages" icon="browser" href="/features/status-pages">
+    Display SLA metrics on public status pages
+  </Card>
+</CardGroup>

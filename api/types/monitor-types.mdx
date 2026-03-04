@@ -1,0 +1,126 @@
+---
+title: 'Monitor Types'
+description: 'TypeScript type definitions for monitors and monitor results'
+---
+
+## MonitorResult
+
+Result returned by a monitor handler function.
+
+<ResponseField name="status" type="MonitorStatus" required>
+  The status of the monitor check
+</ResponseField>
+
+<ResponseField name="responseTime" type="number" required>
+  Response time in milliseconds
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Optional message describing the check result
+</ResponseField>
+
+<ResponseField name="statusCode" type="number">
+  HTTP status code if applicable
+</ResponseField>
+
+```typescript
+export interface MonitorResult {
+  status: MonitorStatus;
+  responseTime: number; // milliseconds
+  message?: string;
+  statusCode?: number;
+}
+```
+
+## MonitorStatus
+
+The status of a monitor check.
+
+```typescript
+export type MonitorStatus = "up" | "down" | "degraded" | "pending";
+```
+
+<ResponseField name="up" type="literal">
+  Monitor is functioning normally
+</ResponseField>
+
+<ResponseField name="down" type="literal">
+  Monitor has failed or is unreachable
+</ResponseField>
+
+<ResponseField name="degraded" type="literal">
+  Monitor is responding but with degraded performance
+</ResponseField>
+
+<ResponseField name="pending" type="literal">
+  Monitor check is pending or has not yet run
+</ResponseField>
+
+## MonitorConfig
+
+Monitor configuration file schema. The filename becomes the monitor ID.
+
+<ResponseField name="name" type="string" required>
+  Display name for the monitor
+</ResponseField>
+
+<ResponseField name="interval" type="string">
+  Human-readable interval: "30s", "5m", "1h". Optional if `cron` is set.
+</ResponseField>
+
+<ResponseField name="cron" type="string">
+  Cron expression: "*/5 * * * *". Optional if `interval` is set.
+</ResponseField>
+
+<ResponseField name="timeout" type="string">
+  Human-readable timeout duration. Defaults to "30s".
+</ResponseField>
+
+<ResponseField name="active" type="boolean">
+  Whether the monitor is active. Defaults to `true`.
+</ResponseField>
+
+<ResponseField name="alerts" type="AlertConfig[]">
+  Array of alert configurations for this monitor
+</ResponseField>
+
+<ResponseField name="handler" type="() => Promise<MonitorResult>" required>
+  Handler function that runs the monitor check. Returns status, response time, and optional message.
+</ResponseField>
+
+```typescript
+export interface MonitorConfig {
+  name: string;
+  interval?: string; // human-readable: "30s", "5m", "1h" - optional if cron is set
+  cron?: string; // cron expression: "*/5 * * * *" - optional if interval is set
+  timeout?: string; // human-readable, defaults to "30s"
+  active?: boolean; // defaults to true
+  alerts?: AlertConfig[];
+
+  /**
+   * Handler function that runs the monitor check
+   * Returns status, response time, and optional message
+   */
+  handler: () => Promise<MonitorResult>;
+}
+```
+
+## Example
+
+```typescript
+import { monitor } from "pongo";
+
+export default monitor({
+  name: "API Health",
+  interval: "1m",
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com/health");
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  },
+});
+```

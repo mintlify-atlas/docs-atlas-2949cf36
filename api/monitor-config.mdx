@@ -1,0 +1,341 @@
+---
+title: "MonitorConfig"
+description: "Monitor configuration schema and helper functions"
+---
+
+## MonitorConfig Interface
+
+Defines a health check monitor with automatic scheduling and alerting.
+
+```typescript
+interface MonitorConfig {
+  name: string;
+  interval?: string;
+  cron?: string;
+  timeout?: string;
+  active?: boolean;
+  alerts?: AlertConfig[];
+  handler: () => Promise<MonitorResult>;
+}
+```
+
+### Fields
+
+<ParamField path="name" type="string" required>
+  Display name for the monitor shown in dashboards and alerts
+</ParamField>
+
+<ParamField path="interval" type="string">
+  Human-readable interval for check frequency: `"30s"`, `"5m"`, `"1h"`, `"1d"`
+  
+  Optional if `cron` is set. Uses `parseDuration()` for parsing.
+</ParamField>
+
+<ParamField path="cron" type="string">
+  Cron expression for scheduling: `"*/5 * * * *"` (every 5 minutes)
+  
+  Optional if `interval` is set. Standard cron syntax supported.
+</ParamField>
+
+<ParamField path="timeout" type="string" default="30s">
+  Maximum execution time for the handler function
+  
+  Format: `"30s"`, `"1m"`, etc. Handler is terminated if exceeded.
+</ParamField>
+
+<ParamField path="active" type="boolean" default="true">
+  Whether the monitor runs on schedule
+  
+  Set to `false` to temporarily disable without removing configuration.
+</ParamField>
+
+<ParamField path="alerts" type="AlertConfig[]">
+  Alert definitions triggered by check results
+  
+  See [AlertConfig](/api/alert-config) for full schema.
+</ParamField>
+
+<ParamField path="handler" type="() => Promise<MonitorResult>" required>
+  Async function that performs the health check
+  
+  Must return a `MonitorResult` with status, response time, and optional metadata.
+</ParamField>
+
+## MonitorResult Interface
+
+Return value from monitor handler functions.
+
+```typescript
+interface MonitorResult {
+  status: "up" | "down" | "degraded" | "pending";
+  responseTime: number;
+  message?: string;
+  statusCode?: number;
+}
+```
+
+### Fields
+
+<ParamField path="status" type="MonitorStatus" required>
+  Health status:
+  - `"up"`: Service is healthy
+  - `"down"`: Service is unavailable
+  - `"degraded"`: Service is slow or partially unavailable
+  - `"pending"`: Initial check not yet completed
+</ParamField>
+
+<ParamField path="responseTime" type="number" required>
+  Check duration in milliseconds
+  
+  Used for latency tracking and SLA calculations.
+</ParamField>
+
+<ParamField path="message" type="string">
+  Optional context about the check result
+  
+  Displayed in dashboards and included in alert notifications.
+</ParamField>
+
+<ParamField path="statusCode" type="number">
+  HTTP status code if checking a web endpoint
+  
+  Stored for debugging and included in check history.
+</ParamField>
+
+## monitor() Helper
+
+Type-safe wrapper for monitor configuration with full IntelliSense support.
+
+```typescript
+function monitor(config: MonitorConfig): MonitorConfig
+```
+
+### Usage
+
+```typescript pongo/monitors/api.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "API Health",
+  interval: "1m",
+  timeout: "10s",
+  
+  async handler() {
+    const start = Date.now();
+    const res = await fetch("https://api.example.com/health");
+    
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime: Date.now() - start,
+      statusCode: res.status,
+    };
+  },
+});
+```
+
+## parseDuration() Function
+
+Converts human-readable durations to milliseconds.
+
+```typescript
+function parseDuration(duration: string): number
+```
+
+### Supported Formats
+
+- `"30s"` - seconds
+- `"5m"` - minutes
+- `"1h"` - hours
+- `"1d"` - days
+
+### Example
+
+```typescript
+import { parseDuration } from "@/lib/config-types";
+
+parseDuration("30s");  // 30000
+parseDuration("5m");   // 300000
+parseDuration("1h");   // 3600000
+parseDuration("1d");   // 86400000
+```
+
+## Real Examples
+
+### Basic HTTP Monitor
+
+```typescript pongo/monitors/wikipedia.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Wikipedia",
+  interval: "5m",
+  timeout: "15s",
+
+  async handler() {
+    const start = Date.now();
+
+    try {
+      const res = await fetch("https://en.wikipedia.org/wiki/Main_Page");
+      const responseTime = Date.now() - start;
+
+      if (!res.ok) {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: `HTTP ${res.status}`,
+        };
+      }
+
+      return {
+        status: "up",
+        responseTime,
+        statusCode: res.status,
+      };
+    } catch (error) {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+```
+
+### Monitor with Degraded State
+
+```typescript pongo/monitors/pongo.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Pongo",
+  interval: "5m",
+  timeout: "30s",
+
+  async handler() {
+    const url = process.env.PONGO_URL;
+    if (!url) {
+      return {
+        status: "down",
+        responseTime: 0,
+        message: "PONGO_URL environment variable not set",
+      };
+    }
+
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url);
+      const responseTime = Date.now() - start;
+
+      if (!res.ok) {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: `HTTP ${res.status}`,
+        };
+      }
+
+      return {
+        status: responseTime > 3000 ? "degraded" : "up",
+        responseTime,
+        statusCode: res.status,
+      };
+    } catch (error) {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+```
+
+### API Status Monitor
+
+```typescript pongo/monitors/cloudflare.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Cloudflare",
+  interval: "15m",
+  timeout: "30s",
+
+  async handler() {
+    const start = Date.now();
+
+    try {
+      const res = await fetch(
+        "https://www.cloudflarestatus.com/api/v2/status.json",
+      );
+      const responseTime = Date.now() - start;
+
+      if (!res.ok) {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: `HTTP ${res.status}`,
+        };
+      }
+
+      const data = (await res.json()) as {
+        status: { indicator: string; description: string };
+      };
+      const indicator = data.status.indicator;
+
+      if (indicator === "none") {
+        return {
+          status: "up",
+          responseTime,
+          statusCode: res.status,
+        };
+      }
+
+      if (indicator === "minor") {
+        return {
+          status: "degraded",
+          responseTime,
+          statusCode: res.status,
+          message: data.status.description,
+        };
+      }
+
+      if (indicator === "major" || indicator === "critical") {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: data.status.description,
+        };
+      }
+
+      return {
+        status: "down",
+        responseTime,
+        statusCode: res.status,
+        message: `Unknown indicator: ${indicator}`,
+      };
+    } catch (error) {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+```
+
+## File Naming
+
+Monitor configuration files must:
+- Live in `pongo/monitors/` directory
+- Use `.ts` extension
+- Export monitor config as default export
+- Filename becomes the monitor ID (referenced in dashboards and alerts)
+
+**Example:** `pongo/monitors/api.ts` creates monitor with ID `"api"`

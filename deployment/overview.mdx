@@ -1,0 +1,127 @@
+---
+title: Deployment Overview
+description: Understand Pongo's deployment architecture and choose the right hosting option
+---
+
+## Architecture
+
+Pongo consists of three main components that work together:
+
+```
+┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
+│   Next.js App   │────>│   Database   │<────│  Scheduler(s)   │
+│  (Dashboard UI) │     │ (SQLite/PG)  │     │ (Monitor Runner) │
+└─────────────────┘     └──────────────┘     └─────────────────┘
+```
+
+### Components
+
+- **Next.js App**: Web dashboard for viewing monitors, managing alerts, and accessing status pages
+- **Database**: Shared data store (SQLite or PostgreSQL) for all configuration and check results
+- **Scheduler**: Standalone service that executes monitors on schedule, evaluates alerts, and dispatches webhooks
+
+All services share one database. No message queues or service mesh required.
+
+## Deployment Scenarios
+
+| Scenario | Dashboard | Scheduler | Best for |
+|---|---|---|---|
+| **Vercel** | Vercel | Vercel Cron | Serverless, auto-scaling |
+| **Fly.io** | Fly.io | Fly.io | Persistent VMs, multi-region |
+| **Hybrid** | Vercel | VPS/Docker | Global CDN + flexible scheduling |
+| **Self-hosted** | Docker | Docker | Full control |
+
+## Choosing a Deployment Option
+
+### Vercel
+
+**Best for:**
+- Teams already using Vercel
+- Serverless infrastructure preference
+- Automatic scaling requirements
+- Fast global CDN delivery
+
+**Considerations:**
+- Vercel Cron runs every 30 seconds minimum
+- Requires PostgreSQL (not SQLite)
+- Cold starts may affect monitor timing
+
+[Deploy to Vercel →](/deployment/vercel)
+
+### Fly.io
+
+**Best for:**
+- Always-on persistent VMs
+- Multi-region deployments
+- Fine-grained control over scheduling
+- SQLite or PostgreSQL support
+
+**Considerations:**
+- Requires Fly.io account
+- Manual scaling configuration
+- Pay for always-running machines
+
+[Deploy to Fly.io →](/deployment/flyio)
+
+### Docker
+
+**Best for:**
+- Containerized environments
+- Local development and testing
+- Docker Compose orchestration
+- Consistent deployment across platforms
+
+**Considerations:**
+- Requires Docker knowledge
+- Manual container orchestration
+- Volume management for persistence
+
+[Deploy with Docker →](/deployment/docker)
+
+### Self-Hosted
+
+**Best for:**
+- Complete infrastructure control
+- On-premises requirements
+- Custom VPS configurations
+- Integration with existing infrastructure
+
+**Considerations:**
+- Manual server setup and maintenance
+- Requires reverse proxy configuration
+- Process management setup needed
+
+[Self-Host Pongo →](/deployment/self-hosted)
+
+## Multi-Region Deployments
+
+Deploy schedulers in different regions pointing at the same database:
+
+```bash
+PONGO_REGION=us-east bun scheduler   # Region 1
+PONGO_REGION=eu-west bun scheduler   # Region 2
+```
+
+Configure `regionThreshold` on alerts to control when they fire across regions:
+
+```typescript
+alerts: [
+  {
+    id: "api-down",
+    name: "API Down",
+    condition: { consecutiveFailures: 3 },
+    regionThreshold: "majority", // "any" | "all" | "majority" | number
+  },
+]
+```
+
+## Database Options
+
+Pongo auto-detects the database from `DATABASE_URL`:
+
+| Backend | `DATABASE_URL` | Notes |
+|---|---|---|
+| SQLite | `file:./pongo/pongo.db` (default) | WAL mode, zero config |
+| PostgreSQL | `postgres://user:pass@host:5432/pongo` | Production recommended |
+
+Migrations run automatically on build.

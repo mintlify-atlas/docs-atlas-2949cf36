@@ -1,0 +1,382 @@
+---
+title: Multi-Region Monitoring
+description: Deploy schedulers in multiple regions and configure region-aware alert thresholds
+---
+
+Pongo supports running schedulers in multiple geographic regions to validate service availability from different locations and reduce false positives from regional network issues.
+
+## Architecture
+
+Multi-region monitoring works by deploying multiple scheduler instances:
+
+```
+┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
+│   Next.js App   │────>│   Database   │<────│  Scheduler      │
+│  (Dashboard UI) │     │ (SQLite/PG)  │     │  (us-east)      │
+└─────────────────┘     └──────────────┘     └─────────────────┘
+                               │
+                               │
+                        ┌──────┴──────┐
+                        │             │
+                ┌───────▼──────┐ ┌────▼──────────┐
+                │  Scheduler   │ │  Scheduler    │
+                │  (eu-west)   │ │  (ap-south)   │
+                └──────────────┘ └───────────────┘
+```
+
+All schedulers share the same database. Each scheduler:
+- Runs all monitors on schedule
+- Tags check results with its region
+- Evaluates alert conditions based on region thresholds
+
+## Deploying Schedulers in Multiple Regions
+
+<Steps>
+  <Step title="Set region identifier">
+    Set the `PONGO_REGION` environment variable for each scheduler:
+
+    ```bash
+    # Region 1 - US East
+    PONGO_REGION=us-east bun scheduler
+
+    # Region 2 - EU West
+    PONGO_REGION=eu-west bun scheduler
+
+    # Region 3 - Asia Pacific
+    PONGO_REGION=ap-south bun scheduler
+    ```
+  </Step>
+
+  <Step title="Configure shared database">
+    All schedulers must connect to the same database:
+
+    ```bash
+    # .env (same for all regions)
+    DATABASE_URL=postgres://user:pass@shared-db.example.com:5432/pongo
+    ```
+  </Step>
+
+  <Step title="Deploy to regions">
+    Deploy each scheduler to its target region using your preferred platform.
+  </Step>
+</Steps>
+
+## PONGO_REGION Environment Variable
+
+The `PONGO_REGION` variable identifies each scheduler instance:
+
+```bash
+PONGO_REGION=us-east        # US East Coast
+PONGO_REGION=eu-west        # Europe (West)
+PONGO_REGION=ap-southeast   # Asia Pacific (Southeast)
+PONGO_REGION=default        # Default if not set
+```
+
+This region identifier:
+- Tags all check results in the database
+- Appears in webhook payloads
+- Controls alert threshold logic
+- Displays in the dashboard UI
+
+## Region Thresholds on Alerts
+
+Configure how many regions must trigger an alert before notifications are sent:
+
+```typescript
+alerts: [
+  {
+    id: "api-down",
+    name: "API Down",
+    condition: { consecutiveFailures: 3 },
+    channels: ["slack"],
+    severity: "critical",
+    regionThreshold: "majority",  // Alert when >50% of regions fail
+  },
+]
+```
+
+### Threshold Options
+
+| Value | Description | Example (3 regions) |
+|-------|-------------|---------------------|
+| `"any"` | Fire if any region triggers (default) | 1 region fails → alert fires |
+| `"majority"` | Fire if >50% of regions trigger | 2 regions fail → alert fires |
+| `"all"` | Fire only if all regions trigger | 3 regions fail → alert fires |
+| `number` | Fire if N or more regions trigger | `2`: 2 regions fail → alert fires |
+
+### Examples
+
+#### Alert on Any Region Failure
+
+Default behavior - immediate alerting:
+
+```typescript
+alerts: [
+  {
+    id: "api-down-any",
+    name: "API Down (Any Region)",
+    condition: { consecutiveFailures: 3 },
+    channels: ["slack"],
+    severity: "warning",
+    regionThreshold: "any",  // Fire immediately
+  },
+]
+```
+
+#### Alert on Majority Failure
+
+Reduce false positives from regional network issues:
+
+```typescript
+alerts: [
+  {
+    id: "api-down-majority",
+    name: "API Down (Majority)",
+    condition: { consecutiveFailures: 3 },
+    channels: ["pagerduty"],
+    severity: "critical",
+    regionThreshold: "majority",  // Fire when >50% fail
+  },
+]
+```
+
+#### Alert on All Regions
+
+Only alert for complete global outages:
+
+```typescript
+alerts: [
+  {
+    id: "api-down-global",
+    name: "API Down (Global Outage)",
+    condition: { consecutiveFailures: 2 },
+    channels: ["pagerduty", "slack"],
+    severity: "critical",
+    regionThreshold: "all",  // Fire only if all regions fail
+  },
+]
+```
+
+#### Alert on Specific Count
+
+Custom threshold for fine-grained control:
+
+```typescript
+alerts: [
+  {
+    id: "api-down-multi",
+    name: "API Down (2+ Regions)",
+    condition: { consecutiveFailures: 3 },
+    channels: ["slack"],
+    severity: "critical",
+    regionThreshold: 2,  // Fire when 2 or more regions fail
+  },
+]
+```
+
+## Alert Payload Region Fields
+
+Webhook payloads include region information:
+
+```json
+{
+  "event": "alert.fired",
+  "alert": {
+    "id": "api-down",
+    "name": "API Down",
+    "monitorId": "api",
+    "monitorName": "Production API",
+    "severity": "critical"
+  },
+  "region": "us-east",
+  "firingRegions": ["us-east", "eu-west"],
+  "healthyRegions": ["ap-south"],
+  "checkResult": {
+    "status": "down",
+    "responseTimeMs": 5000
+  }
+}
+```
+
+### Region Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `region` | `string` | Region that triggered this webhook |
+| `firingRegions` | `string[]` | All regions where alert is firing |
+| `healthyRegions` | `string[]` | Regions where monitor is healthy |
+
+## Deployment Examples
+
+### Fly.io Multi-Region
+
+Deploy schedulers to multiple Fly.io regions:
+
+```bash
+# Deploy to primary region
+fly deploy --region sjc
+
+# Scale to additional regions
+fly scale count 1 --region fra
+fly scale count 1 --region syd
+
+# Set region identifiers via environment
+fly secrets set PONGO_REGION=us-west --region sjc
+fly secrets set PONGO_REGION=eu-central --region fra
+fly secrets set PONGO_REGION=ap-southeast --region syd
+```
+
+### Docker Compose Multi-Region
+
+```yaml
+services:
+  scheduler-us:
+    build: .
+    command: ["bun", "scheduler"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      PONGO_REGION: us-east
+      SCHEDULER_PORT: 3001
+    depends_on: [db]
+
+  scheduler-eu:
+    build: .
+    command: ["bun", "scheduler"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      PONGO_REGION: eu-west
+      SCHEDULER_PORT: 3002
+    depends_on: [db]
+
+  scheduler-ap:
+    build: .
+    command: ["bun", "scheduler"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      PONGO_REGION: ap-south
+      SCHEDULER_PORT: 3003
+    depends_on: [db]
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pongo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+### Kubernetes Multi-Region
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pongo-scheduler
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: scheduler
+        image: pongo:latest
+        command: ["bun", "scheduler"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: pongo-secrets
+              key: database-url
+        - name: PONGO_REGION
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName  # Use node name as region
+```
+
+## Best Practices
+
+### Region Selection
+
+- Deploy to regions where your users are located
+- Include at least 3 regions for meaningful majority threshold
+- Consider latency between scheduler and monitored service
+- Test from regions with different network paths
+
+### Alert Configuration
+
+- Use `"any"` for critical, user-facing services (fast alerting)
+- Use `"majority"` for internal services (reduce false positives)
+- Use `"all"` for alerts about global infrastructure
+- Combine multiple alerts with different thresholds:
+
+```typescript
+alerts: [
+  {
+    id: "api-down-any",
+    name: "API Down (Any Region)",
+    condition: { consecutiveFailures: 3 },
+    channels: ["slack"],
+    severity: "warning",
+    regionThreshold: "any",
+  },
+  {
+    id: "api-down-critical",
+    name: "API Down (Global)",
+    condition: { consecutiveFailures: 2 },
+    channels: ["pagerduty"],
+    severity: "critical",
+    regionThreshold: "all",
+  },
+]
+```
+
+### Database Configuration
+
+- Use PostgreSQL for multi-region deployments (better concurrency)
+- Ensure database is accessible from all scheduler regions
+- Consider connection pooling (e.g., PgBouncer) for many schedulers
+- Monitor database latency from each region
+
+### Monitoring Regions
+
+Check scheduler health endpoints to verify region deployment:
+
+```bash
+curl https://scheduler-us.example.com:3001/health
+# {"status":"ok","region":"us-east","monitors":5}
+
+curl https://scheduler-eu.example.com:3001/health
+# {"status":"ok","region":"eu-west","monitors":5}
+```
+
+## Troubleshooting
+
+### Regions Not Appearing
+
+If regions aren't showing up in the dashboard:
+
+1. Verify `PONGO_REGION` is set correctly
+2. Check scheduler logs for startup messages
+3. Confirm all schedulers connect to the same database
+4. Verify schedulers are running and executing monitors
+
+### Alert Not Firing
+
+If multi-region alerts aren't triggering:
+
+1. Check that enough regions meet the threshold
+2. Verify `regionThreshold` configuration
+3. Review alert conditions (e.g., `consecutiveFailures`)
+4. Check webhook payload for `firingRegions` and `healthyRegions`
+
+### Inconsistent Results
+
+If different regions show different results:
+
+1. This is expected - regions may see different network conditions
+2. Adjust `regionThreshold` to account for variability
+3. Increase `consecutiveFailures` to smooth out transient issues
+4. Consider regional CDN or load balancer behavior

@@ -1,0 +1,372 @@
+---
+title: Monitors
+description: Define uptime checks and health monitors as TypeScript files
+---
+
+Monitors are TypeScript files that define health checks for your services. Each monitor exports a configuration object that specifies what to check, how often to check it, and what to do with the results.
+
+## What are Monitors?
+
+Monitors are the core building blocks of Pongo. They:
+
+- Run automated health checks on your services
+- Track response times and availability
+- Store historical data for uptime analysis
+- Trigger alerts when conditions are met
+- Support custom logic via async handlers
+
+## MonitorConfig Interface
+
+Every monitor must conform to the `MonitorConfig` interface:
+
+```typescript
+export interface MonitorConfig {
+  name: string;
+  interval?: string; // human-readable: "30s", "5m", "1h" - optional if cron is set
+  cron?: string; // cron expression: "*/5 * * * *" - optional if interval is set
+  timeout?: string; // human-readable, defaults to "30s"
+  active?: boolean; // defaults to true
+  alerts?: AlertConfig[];
+
+  /**
+   * Handler function that runs the monitor check
+   * Returns status, response time, and optional message
+   */
+  handler: () => Promise<MonitorResult>;
+}
+```
+
+<ParamField path="name" type="string" required>
+  Display name for the monitor
+</ParamField>
+
+<ParamField path="interval" type="string">
+  How often to run the check. Supports human-readable format: `"30s"`, `"5m"`, `"1h"`, `"1d"`. Optional if `cron` is set.
+</ParamField>
+
+<ParamField path="cron" type="string">
+  Cron expression for scheduling. Example: `"*/5 * * * *"` (every 5 minutes). Optional if `interval` is set.
+</ParamField>
+
+<ParamField path="timeout" type="string" default="30s">
+  Maximum time to wait for the handler to complete. Uses human-readable format.
+</ParamField>
+
+<ParamField path="active" type="boolean" default="true">
+  Whether the monitor is enabled. Set to `false` to temporarily disable without deleting.
+</ParamField>
+
+<ParamField path="alerts" type="AlertConfig[]">
+  Array of alert configurations to attach to this monitor. See [Alerts](/concepts/alerts) for details.
+</ParamField>
+
+<ParamField path="handler" type="() => Promise<MonitorResult>" required>
+  Async function that performs the actual health check and returns a result.
+</ParamField>
+
+## MonitorResult Interface
+
+The handler function must return a `MonitorResult` object:
+
+```typescript
+export interface MonitorResult {
+  status: MonitorStatus;
+  responseTime: number; // milliseconds
+  message?: string;
+  statusCode?: number;
+}
+```
+
+<ParamField path="status" type="'up' | 'down' | 'degraded' | 'pending'" required>
+  Current status of the service being monitored
+</ParamField>
+
+<ParamField path="responseTime" type="number" required>
+  Response time in milliseconds
+</ParamField>
+
+<ParamField path="message" type="string">
+  Optional message with additional context (e.g., error details)
+</ParamField>
+
+<ParamField path="statusCode" type="number">
+  HTTP status code if applicable
+</ParamField>
+
+## Handler Function
+
+The handler is an async function where you implement your check logic:
+
+```typescript
+async handler() {
+  const start = Date.now();
+  
+  try {
+    const res = await fetch("https://api.example.com/health");
+    const responseTime = Date.now() - start;
+    
+    return {
+      status: res.ok ? "up" : "down",
+      responseTime,
+      statusCode: res.status,
+    };
+  } catch (error) {
+    return {
+      status: "down",
+      responseTime: Date.now() - start,
+      message: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+```
+
+<Note>
+  Always measure response time from start to finish, and handle errors gracefully by returning a "down" status.
+</Note>
+
+## Scheduling
+
+Monitors can be scheduled using either `interval` or `cron`:
+
+### Interval-based Scheduling
+
+Use human-readable durations:
+
+```typescript
+interval: "30s"  // every 30 seconds
+interval: "5m"   // every 5 minutes
+interval: "1h"   // every hour
+interval: "1d"   // every day
+```
+
+### Cron-based Scheduling
+
+Use standard cron expressions:
+
+```typescript
+cron: "*/5 * * * *"    // every 5 minutes
+cron: "0 */2 * * *"    // every 2 hours
+cron: "0 9 * * 1-5"    // weekdays at 9am
+```
+
+<Note>
+  You must specify either `interval` or `cron`, but not both.
+</Note>
+
+## Examples
+
+### Basic HTTP Health Check
+
+```typescript pongo/monitors/pongo.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Pongo",
+  interval: "5m",
+  timeout: "30s",
+
+  async handler() {
+    const url = process.env.PONGO_URL;
+    if (!url) {
+      return {
+        status: "down",
+        responseTime: 0,
+        message: "PONGO_URL environment variable not set",
+      };
+    }
+
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url);
+      const responseTime = Date.now() - start;
+
+      if (!res.ok) {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: `HTTP ${res.status}`,
+        };
+      }
+
+      return {
+        status: responseTime > 3000 ? "degraded" : "up",
+        responseTime,
+        statusCode: res.status,
+      };
+    } catch (error) {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+```
+
+### Third-party Status Page Integration
+
+```typescript pongo/monitors/vercel.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Vercel",
+  interval: "15m",
+  timeout: "30s",
+
+  async handler() {
+    const start = Date.now();
+
+    try {
+      const res = await fetch(
+        "https://www.vercel-status.com/api/v2/status.json",
+      );
+      const responseTime = Date.now() - start;
+
+      if (!res.ok) {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: `HTTP ${res.status}`,
+        };
+      }
+
+      const data = (await res.json()) as {
+        status: { indicator: string; description: string };
+      };
+      const indicator = data.status.indicator;
+
+      if (indicator === "none") {
+        return {
+          status: "up",
+          responseTime,
+          statusCode: res.status,
+        };
+      }
+
+      if (indicator === "minor") {
+        return {
+          status: "degraded",
+          responseTime,
+          statusCode: res.status,
+          message: data.status.description,
+        };
+      }
+
+      if (indicator === "major" || indicator === "critical") {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: data.status.description,
+        };
+      }
+
+      return {
+        status: "down",
+        responseTime,
+        statusCode: res.status,
+        message: `Unknown indicator: ${indicator}`,
+      };
+    } catch (error) {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+```
+
+### Simple Website Check
+
+```typescript pongo/monitors/hackernews.ts
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "Hacker News",
+  interval: "5m",
+  timeout: "15s",
+
+  async handler() {
+    const start = Date.now();
+
+    try {
+      const res = await fetch("https://news.ycombinator.com/");
+      const responseTime = Date.now() - start;
+
+      if (!res.ok) {
+        return {
+          status: "down",
+          responseTime,
+          statusCode: res.status,
+          message: `HTTP ${res.status}`,
+        };
+      }
+
+      return {
+        status: "up",
+        responseTime,
+        statusCode: res.status,
+      };
+    } catch (error) {
+      return {
+        status: "down",
+        responseTime: Date.now() - start,
+        message: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  },
+});
+```
+
+## File Structure
+
+Monitors live in `pongo/monitors/` and must be registered in the index file:
+
+```typescript pongo/monitors/index.ts
+import api from "./api";
+import database from "./database";
+import cdn from "./cdn";
+
+export default { api, database, cdn };
+```
+
+<Note>
+  The filename (without `.ts`) becomes the monitor ID used throughout the system.
+</Note>
+
+## Helper Function
+
+Use the `monitor()` helper for full type inference:
+
+```typescript
+import { monitor } from "../../src/lib/config-types";
+
+export default monitor({
+  name: "My Service",
+  interval: "1m",
+  async handler() {
+    // TypeScript will validate your return type
+    return {
+      status: "up",
+      responseTime: 123,
+    };
+  },
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Alerts" icon="bell" href="/concepts/alerts">
+    Attach alert conditions to monitors
+  </Card>
+  <Card title="Dashboards" icon="chart-line" href="/concepts/dashboards">
+    Group monitors into dashboards
+  </Card>
+</CardGroup>

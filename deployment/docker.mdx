@@ -1,0 +1,381 @@
+---
+title: Deploy with Docker
+description: Deploy Pongo using Docker and Docker Compose for containerized environments
+---
+
+Deploy Pongo using Docker for consistent, containerized deployments across any platform.
+
+## Docker Image
+
+Pongo includes a multi-stage Dockerfile optimized for production deployments.
+
+### Dockerfile Overview
+
+```dockerfile Dockerfile
+# syntax = docker/dockerfile:1
+
+# Adjust BUN_VERSION as desired
+FROM oven/bun:slim AS base
+
+LABEL fly_launch_runtime="Next.js"
+
+# Next.js app lives here
+WORKDIR /app
+
+# Set production environment
+ENV NODE_ENV="production"
+
+# Install system dependencies
+FROM base AS deps-system
+
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y build-essential pkg-config python-is-python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install node modules
+FROM deps-system AS deps
+
+COPY bun.lock package.json ./
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
+
+# Copy pongo config (separate layer for config changes)
+FROM deps AS pongo-config
+
+COPY pongo ./pongo
+
+# Build application
+FROM pongo-config AS build
+
+COPY . .
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    --mount=type=cache,target=/app/.next/cache \
+    bun next build --experimental-build-mode compile
+
+# Production dependencies only
+FROM deps-system AS production-deps
+
+COPY bun.lock package.json ./
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
+
+# Final stage for app image
+FROM base
+
+# Copy production dependencies
+COPY --from=production-deps /app/node_modules ./node_modules
+
+# Copy everything from build
+COPY --from=build /app ./
+
+ENTRYPOINT [ "/app/docker-entrypoint.js" ]
+
+EXPOSE 3000
+
+CMD [ "bun", "run", "start" ]
+```
+
+### Build Features
+
+- **Multi-stage build**: Optimized image size
+- **Layer caching**: Separate layer for `pongo/` config changes
+- **Build cache**: Faster rebuilds with mounted caches
+- **Production deps**: Only production dependencies in final image
+- **Entrypoint script**: Auto-starts scheduler and archiver
+
+## Docker Compose
+
+### Basic Setup
+
+Create a `docker-compose.yml` file:
+
+```yaml docker-compose.yml
+services:
+  pongo:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: file:/data/pongo.db
+      ACCESS_CODE: your-password
+      SCHEDULER_ENABLED: true
+    volumes:
+      - pongo_data:/data
+
+volumes:
+  pongo_data:
+```
+
+### With PostgreSQL
+
+```yaml docker-compose.yml
+services:
+  pongo:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      ACCESS_CODE: your-password
+      SCHEDULER_ENABLED: true
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pongo
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+```
+
+### Separate Scheduler Service
+
+For more control, run the scheduler as a separate service:
+
+```yaml docker-compose.yml
+services:
+  pongo:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      ACCESS_CODE: your-password
+    depends_on:
+      - db
+
+  scheduler:
+    build: .
+    command: ["bun", "scheduler"]
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/pongo
+      SCHEDULER_PORT: 3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pongo
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+## Running with Docker Compose
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/TimMikeladze/pongo.git
+    cd pongo
+    ```
+  </Step>
+
+  <Step title="Create docker-compose.yml">
+    Choose one of the configurations above and save it as `docker-compose.yml`.
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create a `.env` file:
+    
+    ```bash .env
+    DATABASE_URL=postgres://postgres:password@db:5432/pongo
+    ACCESS_CODE=your-secret-password
+    SCHEDULER_ENABLED=true
+    ```
+  </Step>
+
+  <Step title="Build and start services">
+    ```bash
+    docker compose up -d
+    ```
+  </Step>
+
+  <Step title="View logs">
+    ```bash
+    docker compose logs -f
+    ```
+  </Step>
+</Steps>
+
+## Building Manually
+
+### Build the image
+
+```bash
+docker build -t pongo:latest .
+```
+
+### Run the container
+
+```bash
+docker run -d \
+  --name pongo \
+  -p 3000:3000 \
+  -e DATABASE_URL="file:/data/pongo.db" \
+  -e SCHEDULER_ENABLED=true \
+  -e ACCESS_CODE="your-password" \
+  -v pongo_data:/data \
+  pongo:latest
+```
+
+### Run scheduler separately
+
+```bash
+docker run -d \
+  --name pongo-scheduler \
+  -p 3001:3001 \
+  -e DATABASE_URL="postgres://user:pass@host:5432/pongo" \
+  pongo:latest \
+  bun scheduler
+```
+
+## Volume Management
+
+### SQLite Data Persistence
+
+When using SQLite, mount a volume to persist data:
+
+```bash
+-v pongo_data:/data
+```
+
+The database will be stored at `/data/pongo.db`.
+
+### Backup SQLite Database
+
+```bash
+# Copy from container
+docker cp pongo:/data/pongo.db ./backup/pongo.db
+
+# Restore to container
+docker cp ./backup/pongo.db pongo:/data/pongo.db
+```
+
+### List Volumes
+
+```bash
+docker volume ls
+```
+
+### Inspect Volume
+
+```bash
+docker volume inspect pongo_data
+```
+
+### Remove Volume
+
+```bash
+docker compose down -v
+```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `DATABASE_URL` | Database connection string | `file:/data/pongo.db` |
+| `SCHEDULER_ENABLED` | Auto-start scheduler | `false` |
+| `ARCHIVAL_ENABLED` | Auto-start archiver | `false` |
+| `ACCESS_CODE` | Dashboard password | - (no auth) |
+| `PONGO_REGION` | Region identifier | `default` |
+| `SCHEDULER_PORT` | Scheduler API port | `3001` |
+
+## Updating
+
+<Steps>
+  <Step title="Pull latest changes">
+    ```bash
+    git pull origin main
+    ```
+  </Step>
+
+  <Step title="Rebuild images">
+    ```bash
+    docker compose build
+    ```
+  </Step>
+
+  <Step title="Restart services">
+    ```bash
+    docker compose up -d
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Container won't start
+
+```bash
+# Check logs
+docker compose logs pongo
+
+# Check container status
+docker compose ps
+
+# Restart services
+docker compose restart
+```
+
+### Database connection errors
+
+1. Verify `DATABASE_URL` format
+2. Check database container is running: `docker compose ps`
+3. Verify network connectivity: `docker compose exec pongo ping db`
+
+### Scheduler not running
+
+1. Verify `SCHEDULER_ENABLED=true` in environment
+2. Check logs: `docker compose logs pongo | grep scheduler`
+3. If using separate service, check: `docker compose logs scheduler`
+
+### Out of disk space
+
+```bash
+# Clean up unused images and volumes
+docker system prune -a --volumes
+
+# Check disk usage
+docker system df
+```
+
+## Production Recommendations
+
+- Use PostgreSQL instead of SQLite for better concurrency
+- Set resource limits in `docker-compose.yml`:
+  ```yaml
+  services:
+    pongo:
+      deploy:
+        resources:
+          limits:
+            cpus: '1.0'
+            memory: 1G
+  ```
+- Use health checks to ensure service availability
+- Set up log rotation to prevent disk space issues
+- Use secrets management for sensitive environment variables
+- Enable automatic restarts: `restart: unless-stopped`

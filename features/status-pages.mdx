@@ -1,0 +1,147 @@
+---
+title: Status Pages
+description: Public dashboards with real-time metrics, incident timelines, and RSS/Atom feeds
+---
+
+## Overview
+
+Public status pages provide unauthenticated access to your uptime monitoring dashboards. Each status page displays comprehensive service health information including response time charts, uptime metrics, and incident history.
+
+## Enabling Public Access
+
+Set `public: true` in your dashboard configuration to expose it as a status page:
+
+```typescript
+// pongo/dashboards/production.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Production",
+  slug: "production",
+  public: true,
+  slaTarget: 99.9,
+  monitors: ["api", "database", "cdn"],
+} satisfies DashboardConfig;
+```
+
+## What's Included
+
+Public status pages automatically include:
+
+### Response Time Charts
+- Real-time response time visualization
+- Historical trends with interactive tooltips
+- Error rate tracking
+
+### Uptime Bars
+- Visual uptime history at a glance
+- Color-coded status indicators (green for up, red for down, yellow for degraded)
+- Per-monitor uptime visualization
+
+### Latency Percentiles
+- **P50** (median): 50th percentile response time
+- **P95**: 95th percentile response time
+- **P99**: 99th percentile response time
+
+These metrics help identify performance outliers and ensure consistent service quality.
+
+### Status Distribution
+- Breakdown of time spent in each status (up, down, degraded)
+- Percentage-based visualization
+- Correlates with SLA targets
+
+### Incident Timeline
+- Chronological list of incidents from `pongo/incidents/`
+- Severity indicators (critical, warning, info)
+- Start and resolution timestamps
+- Detailed incident descriptions
+
+### Announcements
+- Scheduled maintenance notifications
+- System updates and changes
+- Expiring announcements with automatic removal
+
+## Status Page Routes
+
+Public status pages are accessible at:
+
+| Route | Description |
+|---|---|
+| `/shared/[slug]` | Public status page (no authentication required) |
+| `/shared/[slug]/feed.xml` | RSS feed for incidents and announcements |
+| `/shared/[slug]/feed.atom` | Atom feed for incidents and announcements |
+
+### Example Routes
+
+For a dashboard with `slug: "production"`:
+
+- **Status page**: `https://your-domain.com/shared/production`
+- **RSS feed**: `https://your-domain.com/shared/production/feed.xml`
+- **Atom feed**: `https://your-domain.com/shared/production/feed.atom`
+
+## RSS and Atom Feeds
+
+Each public dashboard includes syndication feeds that subscribers can use to receive updates about incidents and announcements.
+
+### Feed Contents
+- New incidents as they occur
+- Incident status updates (investigating, identified, monitoring, resolved)
+- Scheduled maintenance announcements
+- System status changes
+
+### Using Feeds
+
+Subscribers can add your feed URL to any RSS reader:
+
+```bash
+# Example: Fetch RSS feed
+curl https://your-domain.com/shared/production/feed.xml
+```
+
+## Authentication
+
+Status pages are always accessible without authentication, even when `ACCESS_CODE` is set for the main dashboard. This ensures your users can check service status without credentials.
+
+<Note>
+Private dashboards (`public: false`) remain protected behind authentication and are not exposed via `/shared/[slug]` routes.
+</Note>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Clear Slugs" icon="link">
+    Choose descriptive, memorable slugs like `production`, `api`, or `services` for easy sharing.
+  </Card>
+  
+  <Card title="Set SLA Targets" icon="bullseye">
+    Configure `slaTarget` (e.g., 99.9) to display uptime goals on your status page.
+  </Card>
+  
+  <Card title="Keep Incidents Updated" icon="pen">
+    Regularly update incident status and resolution times to keep users informed.
+  </Card>
+  
+  <Card title="Promote Feed URLs" icon="rss">
+    Share RSS/Atom feed URLs with users who want proactive notifications.
+  </Card>
+</CardGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Dashboards" icon="chart-line" href="/core-concepts/dashboards">
+    Learn about dashboard configuration and organization
+  </Card>
+  
+  <Card title="Incidents" icon="triangle-exclamation" href="/core-concepts/incidents">
+    Create and manage incident reports
+  </Card>
+  
+  <Card title="Announcements" icon="bullhorn" href="/core-concepts/announcements">
+    Add scheduled maintenance and update notices
+  </Card>
+  
+  <Card title="SLA Tracking" icon="chart-pie" href="/features/sla-tracking">
+    Configure and monitor SLA targets
+  </Card>
+</CardGroup>

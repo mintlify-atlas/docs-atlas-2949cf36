@@ -1,0 +1,342 @@
+---
+title: Environment Variables
+description: Complete reference for all Pongo environment variables
+---
+
+This page documents all environment variables used by Pongo. Variables are organized by category for easier navigation.
+
+## Database
+
+Configure your database connection and driver.
+
+<ParamField path="DATABASE_URL" type="string" default="file:./pongo/pongo.db">
+  Database connection string. Supports SQLite (`file:`) and PostgreSQL (`postgres://`) formats.
+  
+  **Examples:**
+  - SQLite: `file:./pongo/pongo.db`
+  - PostgreSQL: `postgres://user:password@host:5432/pongo`
+</ParamField>
+
+<ParamField path="DB_DRIVER" type="'sqlite' | 'pg'" default="auto-detected">
+  Database driver to use. Automatically detected from `DATABASE_URL` but can be manually set.
+  
+  **Values:**
+  - `sqlite` - SQLite driver
+  - `pg` - PostgreSQL driver
+</ParamField>
+
+## Authentication
+
+Control dashboard access and session management.
+
+<ParamField path="ACCESS_CODE" type="string">
+  Password for dashboard authentication. When set, all non-public routes require login.
+  
+  **Optional** - If not set, the dashboard is open to anyone.
+  
+  **Example:**
+  ```bash
+  ACCESS_CODE=your-secret-password
+  ```
+</ParamField>
+
+<ParamField path="EXPIRY_DAYS" type="number" default="7">
+  Session duration in days. Sessions use encrypted cookies (iron-session).
+  
+  **Example:**
+  ```bash
+  EXPIRY_DAYS=30  # Sessions last 30 days
+  ```
+</ParamField>
+
+## Scheduler
+
+Configure the monitor scheduler service.
+
+<ParamField path="SCHEDULER_ENABLED" type="boolean" default="false">
+  Auto-start scheduler in Docker. Used by the Docker entrypoint.
+  
+  **Example:**
+  ```bash
+  SCHEDULER_ENABLED=true
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_PORT" type="number" default="3001">
+  HTTP API port for the scheduler service.
+  
+  **Example:**
+  ```bash
+  SCHEDULER_PORT=3001
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_URL" type="string">
+  Scheduler service URL. Enables manual monitor runs from the dashboard UI.
+  
+  **Example:**
+  ```bash
+  SCHEDULER_URL=http://scheduler:3001
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_MAX_CONCURRENCY" type="number" default="10">
+  Maximum number of monitors to execute in parallel.
+  
+  **Example:**
+  ```bash
+  SCHEDULER_MAX_CONCURRENCY=20
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_MAX_RETRIES" type="number" default="3">
+  Number of retry attempts for failed monitor checks.
+  
+  **Example:**
+  ```bash
+  SCHEDULER_MAX_RETRIES=5
+  ```
+</ParamField>
+
+<ParamField path="SCHEDULER_RETRY_DELAY_MS" type="number" default="5000">
+  Base retry delay in milliseconds. Uses exponential backoff.
+  
+  **Example:**
+  ```bash
+  SCHEDULER_RETRY_DELAY_MS=10000  # 10 second base delay
+  ```
+</ParamField>
+
+<ParamField path="ENABLE_MANUAL_RUN" type="boolean" default="false">
+  Show manual run button in the dashboard UI. Requires `SCHEDULER_URL` to be set.
+  
+  **Example:**
+  ```bash
+  ENABLE_MANUAL_RUN=true
+  ```
+</ParamField>
+
+<ParamField path="PONGO_REGION" type="string" default="default">
+  Region identifier for multi-region deployments. Used in alert thresholds and region-aware monitoring.
+  
+  **Example:**
+  ```bash
+  PONGO_REGION=us-east
+  PONGO_REGION=eu-west
+  ```
+</ParamField>
+
+## Archival
+
+Configure automatic archival of check results to S3 or local storage.
+
+<ParamField path="ARCHIVAL_ENABLED" type="boolean" default="false">
+  Enable automatic data archival. Archives old check results as Parquet files.
+  
+  **Example:**
+  ```bash
+  ARCHIVAL_ENABLED=true
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVAL_RETENTION_DAYS" type="number" default="30">
+  Number of days before check results are archived.
+  
+  **Example:**
+  ```bash
+  ARCHIVAL_RETENTION_DAYS=90  # Archive after 90 days
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVAL_CRON" type="string" default="0 3 * * *">
+  Cron schedule for archival jobs. Default runs at 3 AM daily.
+  
+  **Examples:**
+  ```bash
+  ARCHIVAL_CRON="0 3 * * *"      # Daily at 3 AM
+  ARCHIVAL_CRON="0 */6 * * *"    # Every 6 hours
+  ARCHIVAL_CRON="0 2 * * 0"      # Weekly on Sunday at 2 AM
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVAL_BATCH_SIZE" type="number" default="10000">
+  Number of rows to process per archival batch.
+  
+  **Example:**
+  ```bash
+  ARCHIVAL_BATCH_SIZE=50000  # Process 50k rows at a time
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVAL_LOCAL_PATH" type="string" default="./archives">
+  Local filesystem path for archives when not using S3.
+  
+  **Example:**
+  ```bash
+  ARCHIVAL_LOCAL_PATH=/data/pongo/archives
+  ```
+</ParamField>
+
+<ParamField path="ARCHIVER_PORT" type="number" default="3002">
+  HTTP API port for the archiver service.
+  
+  **Example:**
+  ```bash
+  ARCHIVER_PORT=3002
+  ```
+</ParamField>
+
+## S3 Storage
+
+Configure S3 for archival storage. All S3 variables are optional if using local archival.
+
+<ParamField path="S3_BUCKET" type="string">
+  S3 bucket name for storing archived data.
+  
+  **Example:**
+  ```bash
+  S3_BUCKET=pongo-archives
+  ```
+</ParamField>
+
+<ParamField path="S3_REGION" type="string">
+  AWS region where the S3 bucket is located.
+  
+  **Example:**
+  ```bash
+  S3_REGION=us-east-1
+  ```
+</ParamField>
+
+<ParamField path="S3_ACCESS_KEY_ID" type="string">
+  AWS access key ID for S3 authentication.
+  
+  **Example:**
+  ```bash
+  S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+  ```
+</ParamField>
+
+<ParamField path="S3_SECRET_ACCESS_KEY" type="string">
+  AWS secret access key for S3 authentication.
+  
+  **Example:**
+  ```bash
+  S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+  ```
+</ParamField>
+
+<ParamField path="S3_PREFIX" type="string">
+  Prefix for S3 object keys. Useful for organizing archives within a shared bucket.
+  
+  **Example:**
+  ```bash
+  S3_PREFIX=production/archives
+  ```
+</ParamField>
+
+## Vercel Deployment
+
+Specific variables for Vercel deployments.
+
+<ParamField path="CRON_SECRET" type="string">
+  Authentication token for the Vercel cron endpoint (`/api/cron`).
+  
+  **Required for Vercel deployments** to secure the cron endpoint.
+  
+  **Example:**
+  ```bash
+  # Generate a secure secret
+  CRON_SECRET=$(openssl rand -base64 32)
+  ```
+</ParamField>
+
+## Application Settings
+
+<ParamField path="NEXT_PUBLIC_URL" type="string">
+  Public URL of your Pongo instance. Used for SEO metadata and generating absolute URLs.
+  
+  **Example:**
+  ```bash
+  NEXT_PUBLIC_URL=https://status.example.com
+  ```
+</ParamField>
+
+## Quick Reference
+
+### Minimal Configuration
+
+For a basic local development setup:
+
+```bash .env
+# Optional - defaults are fine for development
+DATABASE_URL=file:./pongo/pongo.db
+```
+
+### Production Configuration
+
+Recommended settings for production:
+
+```bash .env
+# Database (required)
+DATABASE_URL=postgres://user:password@host:5432/pongo
+
+# Authentication (recommended)
+ACCESS_CODE=your-secret-password
+
+# Scheduler (if using separate scheduler service)
+SCHEDULER_URL=http://scheduler:3001
+ENABLE_MANUAL_RUN=true
+PONGO_REGION=us-east
+
+# Archival (optional)
+ARCHIVAL_ENABLED=true
+ARCHIVAL_RETENTION_DAYS=90
+S3_BUCKET=pongo-archives
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=your-key
+S3_SECRET_ACCESS_KEY=your-secret
+
+# Application
+NEXT_PUBLIC_URL=https://status.example.com
+```
+
+### Vercel Configuration
+
+```bash .env
+DATABASE_URL=postgres://user:password@host:5432/pongo
+CRON_SECRET=$(openssl rand -base64 32)
+ACCESS_CODE=your-password
+NEXT_PUBLIC_URL=https://your-app.vercel.app
+```
+
+### Docker Configuration
+
+```bash .env
+DATABASE_URL=postgres://postgres:password@db:5432/pongo
+ACCESS_CODE=your-password
+SCHEDULER_ENABLED=true
+ARCHIVAL_ENABLED=true
+S3_BUCKET=pongo-archives
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=your-key
+S3_SECRET_ACCESS_KEY=your-secret
+```
+
+## Environment-Specific Notes
+
+<Note>
+  **Public Routes**: The following routes are always accessible without authentication, even when `ACCESS_CODE` is set:
+  - `/` - Landing page
+  - `/shared/*` - Public status pages
+  - `/login` - Login page
+  - `/api/*` - API endpoints
+</Note>
+
+<Warning>
+  **Security**: Never commit `.env` files to version control. Use environment variable management provided by your hosting platform.
+</Warning>
+
+<Tip>
+  **Session Management**: Sessions are stored as encrypted cookies using iron-session. They last for the duration specified by `EXPIRY_DAYS` (default 7 days).
+</Tip>

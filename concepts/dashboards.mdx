@@ -1,0 +1,334 @@
+---
+title: Dashboards
+description: Group monitors into dashboards with SLA targets and public status pages
+---
+
+Dashboards group related monitors together and provide a unified view of service health. They can be private (internal team use) or public (status pages for customers).
+
+## What are Dashboards?
+
+Dashboards are configuration files that:
+
+- Group multiple monitors by service, environment, or team
+- Calculate aggregate uptime and availability metrics
+- Track SLA targets and violations
+- Optionally expose public status pages
+- Display incidents and announcements
+- Generate RSS/Atom feeds for status updates
+
+## DashboardConfig Interface
+
+Dashboards are defined as TypeScript configuration objects:
+
+```typescript
+export interface DashboardConfig {
+  name: string;
+  slug: string;
+  public?: boolean; // defaults to false
+  monitors: string[]; // array of monitor IDs (filenames without .ts)
+  slaTarget?: number; // percentage, e.g., 99.9
+}
+```
+
+<ParamField path="name" type="string" required>
+  Display name for the dashboard in the UI
+</ParamField>
+
+<ParamField path="slug" type="string" required>
+  URL-friendly identifier used in routes. Must be unique across all dashboards.
+</ParamField>
+
+<ParamField path="public" type="boolean" default="false">
+  Whether the dashboard is accessible without authentication. Public dashboards are accessible at `/shared/[slug]`.
+</ParamField>
+
+<ParamField path="monitors" type="string[]" required>
+  Array of monitor IDs to include. Monitor IDs are the filenames (without `.ts` extension) from `pongo/monitors/`.
+</ParamField>
+
+<ParamField path="slaTarget" type="number">
+  Target uptime percentage (e.g., `99.9` for 99.9%). Dashboard calculates actual uptime against this target.
+</ParamField>
+
+## Public vs Private Dashboards
+
+### Private Dashboards
+
+By default, dashboards are private and require authentication:
+
+```typescript
+export default {
+  name: "Internal Services",
+  slug: "internal",
+  public: false, // or omit entirely
+  monitors: ["api", "database", "cache"],
+} satisfies DashboardConfig;
+```
+
+- Only accessible when logged in
+- Accessed at `/dashboards/[id]`
+- Full access to all features and settings
+
+### Public Dashboards
+
+Public dashboards serve as status pages for your users:
+
+```typescript
+export default {
+  name: "Production Status",
+  slug: "status",
+  public: true,
+  monitors: ["api", "cdn", "database"],
+  slaTarget: 99.9,
+} satisfies DashboardConfig;
+```
+
+- Accessible without authentication
+- Accessed at `/shared/[slug]`
+- Include RSS and Atom feeds
+- Show incidents and announcements
+- Display uptime bars and metrics
+
+<Note>
+  Public dashboards are perfect for customer-facing status pages. They show service health without exposing internal details or requiring login.
+</Note>
+
+## SLA Targets
+
+Set an SLA target to track uptime commitments:
+
+```typescript
+slaTarget: 99.9  // 99.9% uptime target
+```
+
+The dashboard calculates:
+
+- **Current uptime**: Percentage of successful checks
+- **SLA status**: Whether current uptime meets target
+- **Downtime budget**: Remaining allowed downtime based on target
+
+### Common SLA Targets
+
+| Target | Downtime/month | Downtime/year | Use Case |
+|--------|----------------|---------------|----------|
+| 90% | 72 hours | 36.5 days | Development/testing |
+| 95% | 36 hours | 18.25 days | Non-critical services |
+| 99% | 7.2 hours | 3.65 days | Standard production |
+| 99.9% | 43 minutes | 8.76 hours | High-availability services |
+| 99.99% | 4.3 minutes | 52.56 minutes | Mission-critical systems |
+
+## Dashboard Features
+
+Public dashboards automatically include:
+
+### Uptime Metrics
+
+- Overall uptime percentage
+- Response time charts (P50, P95, P99)
+- Status distribution (up/down/degraded)
+- Uptime bars showing check history
+
+### Incident Timeline
+
+Display incidents from `pongo/incidents/` with:
+
+- Severity levels (critical, major, minor)
+- Status tracking (investigating, identified, monitoring, resolved)
+- Affected monitors
+- Timestamps and resolution notes
+
+### Announcements
+
+Show scheduled maintenance and updates from `pongo/announcements/` with:
+
+- Type indicators (info, warning, success, maintenance)
+- Expiration dates
+- Dashboard-specific filtering
+
+### Feed Syndication
+
+Automatic RSS and Atom feeds:
+
+- RSS: `/shared/[slug]/feed.xml`
+- Atom: `/shared/[slug]/feed.atom`
+
+## Examples
+
+### Production Status Dashboard
+
+```typescript pongo/dashboards/status.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Status",
+  slug: "status",
+  public: true,
+  monitors: ["vercel", "hackernews", "wikipedia"],
+  slaTarget: 99.9,
+} satisfies DashboardConfig;
+```
+
+This creates a public status page at `/shared/status` showing the uptime of three services.
+
+### Internal Monitoring Dashboard
+
+```typescript pongo/dashboards/dogfood.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Dog Food",
+  slug: "dogfood",
+  public: true,
+  monitors: ["pongo"],
+  slaTarget: 99.9,
+} satisfies DashboardConfig;
+```
+
+This monitors Pongo itself ("dogfooding") with a 99.9% uptime target.
+
+### Private Team Dashboard
+
+```typescript pongo/dashboards/engineering.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "Engineering Services",
+  slug: "engineering",
+  public: false,
+  monitors: [
+    "api-staging",
+    "api-production",
+    "database-primary",
+    "database-replica",
+    "redis-cache",
+  ],
+  slaTarget: 99.95,
+} satisfies DashboardConfig;
+```
+
+This dashboard is only accessible to authenticated users.
+
+### Multi-environment Dashboard
+
+```typescript pongo/dashboards/all-environments.ts
+import type { DashboardConfig } from "@/lib/config-types";
+
+export default {
+  name: "All Environments",
+  slug: "all",
+  monitors: [
+    "dev-api",
+    "staging-api",
+    "prod-api",
+    "dev-database",
+    "staging-database",
+    "prod-database",
+  ],
+} satisfies DashboardConfig;
+```
+
+Group monitors across multiple environments for a comprehensive view.
+
+## File Structure
+
+Dashboards live in `pongo/dashboards/` and must be registered in the index file:
+
+```typescript pongo/dashboards/index.ts
+import production from "./production";
+import staging from "./staging";
+import internal from "./internal";
+
+export default { production, staging, internal };
+```
+
+<Note>
+  The filename (without `.ts`) becomes the dashboard ID used in the database and internal references.
+</Note>
+
+## Routes
+
+### Private Dashboard Routes
+
+| Route | Description |
+|-------|-------------|
+| `/dashboards` | List all dashboards |
+| `/dashboards/[id]` | View private dashboard |
+
+### Public Dashboard Routes
+
+| Route | Description |
+|-------|-------------|
+| `/shared/[slug]` | Public status page |
+| `/shared/[slug]/feed.xml` | RSS feed |
+| `/shared/[slug]/feed.atom` | Atom feed |
+
+## Related Content
+
+Dashboards can display additional context:
+
+### Incidents
+
+Markdown files in `pongo/incidents/` with frontmatter:
+
+```markdown
+---
+dashboard: production
+title: API Gateway Outage
+severity: critical
+status: resolved
+affectedMonitors: ["api", "cdn"]
+createdAt: 2025-12-01T10:00:00Z
+resolvedAt: 2025-12-01T11:30:00Z
+---
+
+Root cause: upstream provider network partition.
+Mitigation: failed over to backup region.
+```
+
+### Announcements
+
+Markdown files in `pongo/announcements/` with frontmatter:
+
+```markdown
+---
+dashboard: production
+title: Scheduled Database Maintenance
+type: maintenance
+createdAt: 2025-12-07T10:00:00Z
+expiresAt: 2025-12-08T15:00:00Z
+---
+
+Database maintenance window: 2-3 PM UTC on December 8th.
+Expect brief connection resets during this time.
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Group related monitors">
+    Create dashboards that make sense for your team structure. For example, separate dashboards for frontend, backend, and infrastructure services.
+  </Accordion>
+  
+  <Accordion title="Set realistic SLA targets">
+    Base SLA targets on actual business requirements, not arbitrary numbers. Consider the impact of downtime on your users.
+  </Accordion>
+  
+  <Accordion title="Use public dashboards for transparency">
+    Customer-facing status pages build trust. Make your public dashboard informative but don't expose sensitive internal details.
+  </Accordion>
+  
+  <Accordion title="Keep slugs short and memorable">
+    Public dashboard URLs should be easy to remember and share, like `/shared/status` or `/shared/api`.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitors" icon="activity" href="/concepts/monitors">
+    Create monitors to add to dashboards
+  </Card>
+  <Card title="Alerts" icon="bell" href="/concepts/alerts">
+    Set up alerts for dashboard monitors
+  </Card>
+</CardGroup>

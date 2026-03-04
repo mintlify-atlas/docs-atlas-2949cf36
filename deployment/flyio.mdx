@@ -1,0 +1,339 @@
+---
+title: Deploy to Fly.io
+description: Deploy Pongo to Fly.io with persistent VMs and automatic scheduler startup
+---
+
+Deploy Pongo to Fly.io for always-on persistent VMs with automatic scheduler and archiver startup.
+
+## Quick Start
+
+<Steps>
+  <Step title="Install flyctl">
+    ```bash
+    # macOS
+    brew install flyctl
+    
+    # Linux
+    curl -L https://fly.io/install.sh | sh
+    
+    # Windows
+    iwr https://fly.io/install.ps1 -useb | iex
+    ```
+  </Step>
+
+  <Step title="Authenticate with Fly.io">
+    ```bash
+    fly auth login
+    ```
+  </Step>
+
+  <Step title="Clone and navigate to repository">
+    ```bash
+    git clone https://github.com/TimMikeladze/pongo.git
+    cd pongo
+    ```
+  </Step>
+
+  <Step title="Launch the app">
+    ```bash
+    fly launch
+    ```
+    
+    This command:
+    - Detects the Dockerfile and fly.toml configuration
+    - Creates a new Fly.io app
+    - Provisions a 1GB volume for SQLite data
+    - Deploys the application
+  </Step>
+
+  <Step title="Set environment variables">
+    ```bash
+    # Required: Enable scheduler auto-start
+    fly secrets set SCHEDULER_ENABLED=true
+    
+    # Optional: Use PostgreSQL instead of SQLite
+    fly secrets set DATABASE_URL="postgres://user:pass@host:5432/pongo"
+    
+    # Optional: Password-protect dashboard
+    fly secrets set ACCESS_CODE="your-secret-password"
+    
+    # Optional: Enable archiver
+    fly secrets set ARCHIVAL_ENABLED=true
+    ```
+  </Step>
+
+  <Step title="Deploy the application">
+    ```bash
+    fly deploy
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+### fly.toml
+
+The included `fly.toml` configuration:
+
+```toml fly.toml
+app = 'pongo-production'
+primary_region = 'sjc'
+
+[build]
+
+[[mounts]]
+  source = 'pongo_data'
+  destination = '/data'
+  initial_size = '1gb'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  max_machines_running = 1
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/'
+
+[scale]
+  count = 1
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+```
+
+### Key Settings
+
+- **Volume mount**: Persistent storage at `/data` for SQLite database
+- **Auto-stop disabled**: Keeps machine always running for reliable monitoring
+- **Health checks**: Ensures app stays healthy
+- **Single machine**: Cost-effective for most monitoring needs
+
+## Environment Variables
+
+### Required
+
+| Variable | Description | Default |
+|---|---|---|
+| `SCHEDULER_ENABLED` | Auto-start scheduler in Docker | `false` |
+
+### Optional
+
+| Variable | Description | Default |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string (omit for SQLite) | `file:/data/pongo.db` |
+| `ACCESS_CODE` | Dashboard password | - (no auth) |
+| `PONGO_REGION` | Region identifier for multi-region setups | `default` |
+| `ARCHIVAL_ENABLED` | Auto-start archiver in Docker | `false` |
+| `S3_BUCKET` | S3 bucket for archives | - |
+| `S3_REGION` | S3 region | - |
+| `S3_ACCESS_KEY_ID` | S3 access key | - |
+| `S3_SECRET_ACCESS_KEY` | S3 secret key | - |
+
+## Automatic Scheduler Startup
+
+The included `docker-entrypoint.js` automatically starts the scheduler when `SCHEDULER_ENABLED=true`:
+
+```javascript docker-entrypoint.js
+const schedulerEnabled = process.env.SCHEDULER_ENABLED === "true";
+const archiverEnabled = process.env.ARCHIVAL_ENABLED === "true";
+
+if (command === "bun run start") {
+  // Start scheduler in background if enabled
+  if (schedulerEnabled) {
+    spawn("bun", ["run", "src/scheduler/index.ts"], {
+      shell: true,
+      stdio: "inherit",
+      env,
+    });
+  }
+
+  // Start archiver in background if enabled
+  if (archiverEnabled) {
+    spawn("bun", ["run", "src/archiver/index.ts"], {
+      shell: true,
+      stdio: "inherit",
+      env,
+    });
+  }
+}
+```
+
+This means:
+- Dashboard, scheduler, and archiver run in a single machine
+- No separate processes or services needed
+- Simplified deployment and lower costs
+
+## Database Options
+
+### SQLite (Default)
+
+By default, Pongo uses SQLite stored in the mounted volume:
+
+```bash
+# Database automatically stored at /data/pongo.db
+DATABASE_URL=file:/data/pongo.db
+```
+
+**Benefits:**
+- Zero configuration
+- No external dependencies
+- Fast local access
+- WAL mode for concurrent reads
+
+### PostgreSQL
+
+For production deployments or multi-region setups, use PostgreSQL:
+
+```bash
+fly secrets set DATABASE_URL="postgres://user:pass@host:5432/pongo"
+```
+
+**PostgreSQL Options:**
+- Fly.io Postgres: `fly postgres create`
+- External providers: Neon, Supabase, Railway
+
+## Scaling
+
+### Vertical Scaling
+
+Increase machine resources:
+
+```bash
+# Increase memory
+fly scale memory 2048
+
+# Increase CPUs
+fly scale count 2
+```
+
+### Multi-Region Deployment
+
+Deploy to multiple regions for geographic monitoring:
+
+```bash
+# Deploy to US East
+fly regions add iad
+fly scale count 2
+
+# Set region identifier
+fly secrets set PONGO_REGION=us-east
+```
+
+Each region's scheduler should point to the same database.
+
+## Monitoring and Logs
+
+### View logs
+
+```bash
+fly logs
+```
+
+### SSH into machine
+
+```bash
+fly ssh console
+```
+
+### Check machine status
+
+```bash
+fly status
+```
+
+### View metrics
+
+```bash
+fly dashboard
+```
+
+## Troubleshooting
+
+### Scheduler not running
+
+1. Verify `SCHEDULER_ENABLED=true`:
+   ```bash
+   fly secrets list
+   ```
+
+2. Check logs for scheduler startup:
+   ```bash
+   fly logs | grep scheduler
+   ```
+
+3. SSH into machine and check processes:
+   ```bash
+   fly ssh console
+   ps aux | grep scheduler
+   ```
+
+### Database persistence issues
+
+1. Verify volume is mounted:
+   ```bash
+   fly volumes list
+   ```
+
+2. Check volume size:
+   ```bash
+   fly ssh console
+   df -h /data
+   ```
+
+3. Expand volume if needed:
+   ```bash
+   fly volumes extend <volume-id> --size 5
+   ```
+
+### Out of memory
+
+Increase machine memory:
+
+```bash
+fly scale memory 2048
+```
+
+## Cost Optimization
+
+### Auto-stop during low usage
+
+For development environments:
+
+```toml
+[http_service]
+  auto_stop_machines = 'suspend'
+  auto_start_machines = true
+  min_machines_running = 0
+```
+
+<Warning>
+  This will stop monitors from running when the machine suspends. Only use for development.
+</Warning>
+
+### Use shared CPU
+
+The default configuration uses shared CPUs, which are cost-effective for most monitoring workloads:
+
+```toml
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+```
+
+## Updating
+
+Pull latest changes and redeploy:
+
+```bash
+git pull origin main
+fly deploy
+```
