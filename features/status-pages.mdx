@@ -70,6 +70,8 @@ Public status pages are accessible at:
 | `/shared/[slug]` | Public status page (no authentication required) |
 | `/shared/[slug]/feed.xml` | RSS feed for incidents and announcements |
 | `/shared/[slug]/feed.atom` | Atom feed for incidents and announcements |
+| `/shared/[slug]/status.json` | JSON API for programmatic status checks |
+| `/api/status.json` | Global system status JSON (all monitors) |
 
 ### Example Routes
 
@@ -78,6 +80,57 @@ For a dashboard with `slug: "production"`:
 - **Status page**: `https://your-domain.com/shared/production`
 - **RSS feed**: `https://your-domain.com/shared/production/feed.xml`
 - **Atom feed**: `https://your-domain.com/shared/production/feed.atom`
+- **Status API**: `https://your-domain.com/shared/production/status.json`
+
+For global system status:
+
+- **Global status**: `https://your-domain.com/api/status.json`
+
+## Status JSON API
+
+The `/api/status.json` endpoint provides a machine-readable overview of your entire system status. This is useful for integrating Pongo status into other services or building custom status displays.
+
+### Response Format
+
+```json
+{
+  "page": {
+    "id": "pongo",
+    "name": "pongo.sh",
+    "url": "https://your-domain.com",
+    "time_zone": "Etc/UTC",
+    "updated_at": "2025-03-04T12:00:00.000Z"
+  },
+  "status": {
+    "indicator": "none",
+    "description": "All Systems Operational"
+  }
+}
+```
+
+### Status Indicators
+
+The `indicator` field reflects the worst status across all monitors and active incidents:
+
+| Indicator | Description | Causes |
+|---|---|---|
+| `none` | All systems operational | All monitors up, no incidents |
+| `minor` | Minor service outage | Degraded monitors, minor incidents, or firing alerts |
+| `major` | Major service outage | Monitors down, major incidents |
+| `critical` | Critical system outage | Critical incidents |
+
+### Example Usage
+
+```bash
+# Check overall system status
+curl https://your-domain.com/api/status.json
+
+# Use in monitoring scripts
+STATUS=$(curl -s https://your-domain.com/api/status.json | jq -r '.status.indicator')
+if [ "$STATUS" != "none" ]; then
+  echo "System degraded: $STATUS"
+fi
+```
 
 ## RSS and Atom Feeds
 

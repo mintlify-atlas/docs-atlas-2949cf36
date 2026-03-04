@@ -10,11 +10,12 @@ This page documents all environment variables used by Pongo. Variables are organ
 Configure your database connection and driver.
 
 <ParamField path="DATABASE_URL" type="string" default="file:./pongo/pongo.db">
-  Database connection string. Supports SQLite (`file:`) and PostgreSQL (`postgres://`) formats.
+  Database connection string. Supports SQLite (`file:`), PostgreSQL (`postgres://`), and Turso (`libsql://`) formats.
   
   **Examples:**
   - SQLite: `file:./pongo/pongo.db`
   - PostgreSQL: `postgres://user:password@host:5432/pongo`
+  - Turso: `libsql://your-db.turso.io`
 </ParamField>
 
 <ParamField path="DB_DRIVER" type="'sqlite' | 'pg'" default="auto-detected">
@@ -23,6 +24,16 @@ Configure your database connection and driver.
   **Values:**
   - `sqlite` - SQLite driver
   - `pg` - PostgreSQL driver
+</ParamField>
+
+<ParamField path="TURSO_AUTH_TOKEN" type="string">
+  Authentication token for Turso database connections. Required when using `libsql://` connection strings.
+  
+  **Example:**
+  ```bash
+  DATABASE_URL=libsql://your-db.turso.io
+  TURSO_AUTH_TOKEN=your-turso-token
+  ```
 </ParamField>
 
 ## Authentication
@@ -259,6 +270,15 @@ Specific variables for Vercel deployments.
   **Example:**
   ```bash
   NEXT_PUBLIC_URL=https://status.example.com
+  ```
+</ParamField>
+
+<ParamField path="SHOW_ABOUT" type="boolean" default="false">
+  Show the "About" section in the dashboard UI.
+  
+  **Example:**
+  ```bash
+  SHOW_ABOUT=true
   ```
 </ParamField>
 
